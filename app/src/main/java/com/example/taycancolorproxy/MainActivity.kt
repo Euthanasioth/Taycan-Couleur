@@ -1,6 +1,8 @@
 package com.example.taycancolorproxy
 
 import android.content.Intent
+import android.content.SharedPreferences
+import android.graphics.Color
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
@@ -14,13 +16,15 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        val prefs: SharedPreferences = getSharedPreferences("taycan_couleur", MODE_PRIVATE)
+
         val scroll = ScrollView(this)
         val layout = LinearLayout(this)
         layout.orientation = LinearLayout.VERTICAL
         layout.setPadding(40, 100, 40, 40)
 
         val text = TextView(this)
-        text.text = "Taycan Couleur\n\nÉtape 1 : autorise l'accès aux notifications ci-dessous.\nÉtape 2 : lance Deezer et joue un titre.\nÉtape 3 : choisis \"Taycan Couleur\" comme source média dans Android Auto."
+        text.text = "Taycan Couleur\n\nÉtape 1 : autorise l'accès aux notifications ci-dessous.\nÉtape 2 : choisis une couleur.\nÉtape 3 : lance Deezer et sélectionne \"Taycan Couleur\" dans Android Auto."
         text.textSize = 16f
         layout.addView(text)
 
@@ -30,6 +34,34 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         }
         layout.addView(button)
+
+        val colorLabel = TextView(this)
+        colorLabel.setPadding(0, 60, 0, 20)
+        colorLabel.text = "Choisis ta couleur :"
+        colorLabel.textSize = 16f
+        layout.addView(colorLabel)
+
+        val colors = listOf(
+            Triple("Rose / Violet", "#FF3DBB", "#8A2BE2"),
+            Triple("Bleu", "#00C6FF", "#0072FF"),
+            Triple("Vert", "#00F260", "#0575E6"),
+            Triple("Orange", "#FF8C00", "#FF3D00"),
+            Triple("Rouge", "#FF416C", "#FF4B2B")
+        )
+
+        for ((name, c1, c2) in colors) {
+            val colorButton = Button(this)
+            colorButton.text = name
+            colorButton.setBackgroundColor(Color.parseColor(c1))
+            colorButton.setOnClickListener {
+                prefs.edit()
+                    .putString("color1", c1)
+                    .putString("color2", c2)
+                    .apply()
+                colorLabel.text = "Choisis ta couleur : (actuel : $name)"
+            }
+            layout.addView(colorButton)
+        }
 
         val crashFile = File(getExternalFilesDir(null), "crash_log.txt")
         val crashText = TextView(this)
