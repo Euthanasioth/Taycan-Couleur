@@ -46,7 +46,22 @@ class MainActivity : AppCompatActivity() {
             Triple("Bleu", "#00C6FF", "#0072FF"),
             Triple("Vert", "#00F260", "#0575E6"),
             Triple("Orange", "#FF8C00", "#FF3D00"),
-            Triple("Rouge", "#FF416C", "#FF4B2B")
+            Triple("Rouge", "#FF416C", "#FF4B2B"),
+            Triple("Jaune", "#FFE259", "#FFA751"),
+            Triple("Turquoise", "#00FFA3", "#00C2FF"),
+            Triple("Violet foncé", "#7F00FF", "#E100FF"),
+            Triple("Corail", "#FF9966", "#FF5E62"),
+            Triple("Bleu nuit", "#0F2027", "#2C5364"),
+            Triple("Rose pastel", "#FFAFBD", "#FFC3A0"),
+            Triple("Vert lime", "#A8E063", "#56AB2F"),
+            Triple("Or", "#FFD700", "#FFA500"),
+            Triple("Cyan", "#00FFFF", "#0080FF"),
+            Triple("Magenta", "#FF00CC", "#333399"),
+            Triple("Bronze", "#C09B6D", "#8B5E3C"),
+            Triple("Menthe", "#00B09B", "#96C93D"),
+            Triple("Lavande", "#C471ED", "#F64F59"),
+            Triple("Sunset", "#FF512F", "#F09819"),
+            Triple("Noir / Argent", "#434343", "#B0B0B0")
         )
 
         for ((name, c1, c2) in colors) {
