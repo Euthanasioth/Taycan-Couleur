@@ -1,8 +1,5 @@
 package com.example.taycancolorproxy
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.media.MediaMetadata
@@ -10,7 +7,6 @@ import android.media.browse.MediaBrowser
 import android.media.session.MediaController
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
-import android.os.Build
 import android.os.Bundle
 import android.service.media.MediaBrowserService
 
@@ -48,6 +44,7 @@ class ColorProxyService : MediaBrowserService() {
             .setState(PlaybackState.STATE_PAUSED, 0, 1f)
             .build()
         session.setPlaybackState(initialState)
+    }
 
     private fun attach(sourceController: MediaController) {
         session.setCallback(object : MediaSession.Callback() {
@@ -76,48 +73,3 @@ class ColorProxyService : MediaBrowserService() {
         if (source == null) return
 
         val artwork = makeColorArtwork(1000, 1000)
-
-        val builder = MediaMetadata.Builder(source)
-        builder.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artwork)
-        builder.putBitmap(MediaMetadata.METADATA_KEY_ART, artwork)
-
-        session.setMetadata(builder.build())
-    }
-
-    private fun makeColorArtwork(width: Int, height: Int): Bitmap {
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val canvas = android.graphics.Canvas(bitmap)
-        val paint = android.graphics.Paint()
-
-        val gradient = android.graphics.LinearGradient(
-            0f, 0f, width.toFloat(), height.toFloat(),
-            Color.parseColor("#FF3DBB"), Color.parseColor("#8A2BE2"),
-            android.graphics.Shader.TileMode.CLAMP
-        )
-        paint.shader = gradient
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
-
-        return bitmap
-    }
-
-    override fun onGetRoot(
-        clientPackageName: String,
-        clientUid: Int,
-        rootHints: Bundle?
-    ): BrowserRoot {
-        return BrowserRoot("root", null)
-    }
-
-    override fun onLoadChildren(
-        parentId: String,
-        result: Result<MutableList<MediaBrowser.MediaItem>>
-    ) {
-        result.sendResult(mutableListOf())
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        session.release()
-        instance = null
-    }
-}
