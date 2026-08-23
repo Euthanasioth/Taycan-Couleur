@@ -38,6 +38,17 @@ class ColorProxyService : MediaBrowserService() {
         sessionToken = session.sessionToken
         session.isActive = true
 
+        val initialState = PlaybackState.Builder()
+            .setActions(
+                PlaybackState.ACTION_PLAY or
+                PlaybackState.ACTION_PAUSE or
+                PlaybackState.ACTION_SKIP_TO_NEXT or
+                PlaybackState.ACTION_SKIP_TO_PREVIOUS
+            )
+            .setState(PlaybackState.STATE_PAUSED, 0, 1f)
+            .build()
+        session.setPlaybackState(initialState)
+
         startForegroundIfNeeded()
     }
 
