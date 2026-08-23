@@ -86,13 +86,17 @@ class ColorProxyService : MediaBrowserService() {
     }
 
     private fun makeColorArtwork(width: Int, height: Int): Bitmap {
+        val prefs = getSharedPreferences("taycan_couleur", MODE_PRIVATE)
+        val c1 = prefs.getString("color1", "#FF3DBB")!!
+        val c2 = prefs.getString("color2", "#8A2BE2")!!
+
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = android.graphics.Canvas(bitmap)
         val paint = android.graphics.Paint()
 
         val gradient = android.graphics.LinearGradient(
             0f, 0f, width.toFloat(), height.toFloat(),
-            Color.parseColor("#FF3DBB"), Color.parseColor("#8A2BE2"),
+            Color.parseColor(c1), Color.parseColor(c2),
             android.graphics.Shader.TileMode.CLAMP
         )
         paint.shader = gradient
