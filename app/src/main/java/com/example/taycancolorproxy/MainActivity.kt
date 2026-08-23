@@ -5,13 +5,16 @@ import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import java.io.File
 
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        val scroll = ScrollView(this)
         val layout = LinearLayout(this)
         layout.orientation = LinearLayout.VERTICAL
         layout.setPadding(40, 100, 40, 40)
@@ -28,6 +31,26 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(button)
 
-        setContentView(layout)
+        val crashFile = File(getExternalFilesDir(null), "crash_log.txt")
+        val crashText = TextView(this)
+        crashText.setPadding(0, 60, 0, 0)
+        crashText.textSize = 12f
+        if (crashFile.exists()) {
+            crashText.text = "DERNIER CRASH :\n\n" + crashFile.readText()
+        } else {
+            crashText.text = "Aucun crash enregistré pour le moment."
+        }
+        layout.addView(crashText)
+
+        val clearButton = Button(this)
+        clearButton.text = "Effacer le journal de crash"
+        clearButton.setOnClickListener {
+            crashFile.delete()
+            recreate()
+        }
+        layout.addView(clearButton)
+
+        scroll.addView(layout)
+        setContentView(scroll)
     }
 }
