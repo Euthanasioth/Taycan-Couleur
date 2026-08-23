@@ -49,27 +49,6 @@ class ColorProxyService : MediaBrowserService() {
             .build()
         session.setPlaybackState(initialState)
 
-        startForegroundIfNeeded()
-    }
-
-    private fun startForegroundIfNeeded() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                "proxy_channel", "Taycan Couleur",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            val nm = getSystemService(NotificationManager::class.java)
-            nm.createNotificationChannel(channel)
-
-            val notification = Notification.Builder(this, "proxy_channel")
-                .setContentTitle("Taycan Couleur actif")
-                .setSmallIcon(android.R.drawable.ic_media_play)
-                .build()
-
-            startForeground(1, notification)
-        }
-    }
-
     private fun attach(sourceController: MediaController) {
         session.setCallback(object : MediaSession.Callback() {
             override fun onPlay() { sourceController.transportControls.play() }
