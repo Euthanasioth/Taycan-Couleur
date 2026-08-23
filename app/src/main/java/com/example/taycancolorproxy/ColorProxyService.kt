@@ -74,7 +74,11 @@ class ColorProxyService : MediaBrowserService() {
 
         val artwork = makeColorArtwork(1000, 1000)
 
-        val builder = MediaMetadata.Builder(source)
+        val builder = MediaMetadata.Builder()
+        builder.putString(MediaMetadata.METADATA_KEY_TITLE, source.getString(MediaMetadata.METADATA_KEY_TITLE))
+        builder.putString(MediaMetadata.METADATA_KEY_ARTIST, source.getString(MediaMetadata.METADATA_KEY_ARTIST))
+        builder.putString(MediaMetadata.METADATA_KEY_ALBUM, source.getString(MediaMetadata.METADATA_KEY_ALBUM))
+        builder.putLong(MediaMetadata.METADATA_KEY_DURATION, source.getLong(MediaMetadata.METADATA_KEY_DURATION))
         builder.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artwork)
         builder.putBitmap(MediaMetadata.METADATA_KEY_ART, artwork)
 
