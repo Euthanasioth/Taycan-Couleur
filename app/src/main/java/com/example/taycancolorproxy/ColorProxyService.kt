@@ -61,7 +61,7 @@ class ColorProxyService : MediaBrowserService() {
         session.isActive = true
 
         session.setCallback(object : MediaSession.Callback() {
-            override fun onCustomAction(action: String?, extras: Bundle?) {
+            override fun onCustomAction(action: String, extras: Bundle?) {
                 if (action == ACTION_CHANGE_COLOR) cycleColor()
             }
         })
@@ -85,109 +85,4 @@ class ColorProxyService : MediaBrowserService() {
 
     private fun attach(sourceController: MediaController) {
         session.setCallback(object : MediaSession.Callback() {
-            override fun onPlay() { sourceController.transportControls.play() }
-            override fun onPause() { sourceController.transportControls.pause() }
-            override fun onSkipToNext() { sourceController.transportControls.skipToNext() }
-            override fun onSkipToPrevious() { sourceController.transportControls.skipToPrevious() }
-            override fun onStop() { sourceController.transportControls.stop() }
-            override fun onCustomAction(action: String?, extras: Bundle?) {
-                if (action == ACTION_CHANGE_COLOR) cycleColor()
-            }
-        })
-
-        val callback = object : MediaController.Callback() {
-            override fun onMetadataChanged(metadata: MediaMetadata?) {
-                updateMetadata(metadata)
-            }
-            override fun onPlaybackStateChanged(state: PlaybackState?) {
-                session.setPlaybackState(buildState(
-                    state?.state ?: PlaybackState.STATE_PAUSED,
-                    state?.position ?: 0
-                ))
-            }
-        }
-        sourceController.registerCallback(callback)
-
-        updateMetadata(sourceController.metadata)
-        val currentState = sourceController.playbackState
-        session.setPlaybackState(buildState(
-            currentState?.state ?: PlaybackState.STATE_PAUSED,
-            currentState?.position ?: 0
-        ))
-    }
-
-    private fun buildState(state: Int, position: Long): PlaybackState {
-        return PlaybackState.Builder()
-            .setActions(
-                PlaybackState.ACTION_PLAY or
-                PlaybackState.ACTION_PAUSE or
-                PlaybackState.ACTION_SKIP_TO_NEXT or
-                PlaybackState.ACTION_SKIP_TO_PREVIOUS
-            )
-            .addCustomAction(
-                ACTION_CHANGE_COLOR,
-                "Couleur suivante",
-                android.R.drawable.ic_menu_gallery
-            )
-            .setState(state, position, 1f)
-            .build()
-    }
-
-    private fun updateMetadata(source: MediaMetadata?) {
-        if (source == null) return
-        lastSourceMetadata = source
-
-        val artwork = makeColorArtwork(1000, 1000)
-
-        val builder = MediaMetadata.Builder()
-        builder.putString(MediaMetadata.METADATA_KEY_TITLE, source.getString(MediaMetadata.METADATA_KEY_TITLE))
-        builder.putString(MediaMetadata.METADATA_KEY_ARTIST, source.getString(MediaMetadata.METADATA_KEY_ARTIST))
-        builder.putString(MediaMetadata.METADATA_KEY_ALBUM, source.getString(MediaMetadata.METADATA_KEY_ALBUM))
-        builder.putLong(MediaMetadata.METADATA_KEY_DURATION, source.getLong(MediaMetadata.METADATA_KEY_DURATION))
-        builder.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artwork)
-        builder.putBitmap(MediaMetadata.METADATA_KEY_ART, artwork)
-
-        session.setMetadata(builder.build())
-    }
-
-    private fun makeColorArtwork(width: Int, height: Int): Bitmap {
-        val prefs = getSharedPreferences("taycan_couleur", MODE_PRIVATE)
-        val c1 = prefs.getString("color1", "#FF3DBB")!!
-        val c2 = prefs.getString("color2", "#8A2BE2")!!
-
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val canvas = android.graphics.Canvas(bitmap)
-        val paint = android.graphics.Paint()
-
-        val gradient = android.graphics.LinearGradient(
-            0f, 0f, width.toFloat(), height.toFloat(),
-            Color.parseColor(c1), Color.parseColor(c2),
-            android.graphics.Shader.TileMode.CLAMP
-        )
-        paint.shader = gradient
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
-
-        return bitmap
-    }
-
-    override fun onGetRoot(
-        clientPackageName: String,
-        clientUid: Int,
-        rootHints: Bundle?
-    ): BrowserRoot {
-        return BrowserRoot("root", null)
-    }
-
-    override fun onLoadChildren(
-        parentId: String,
-        result: Result<MutableList<MediaBrowser.MediaItem>>
-    ) {
-        result.sendResult(mutableListOf())
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        session.release()
-        instance = null
-    }
-}
+            override fun onPlay() { sourceController.transportControls.pl
