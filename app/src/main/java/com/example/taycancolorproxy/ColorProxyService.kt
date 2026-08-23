@@ -3,16 +3,16 @@ package com.example.taycancolorproxy
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.media.MediaMetadata
+import android.media.browse.MediaBrowser
 import android.media.session.MediaController
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
+import android.os.Bundle
 import android.service.media.MediaBrowserService
-import android.support.v4.media.MediaBrowserCompat
 
 class ColorProxyService : MediaBrowserService() {
 
@@ -60,7 +60,6 @@ class ColorProxyService : MediaBrowserService() {
     }
 
     private fun attach(sourceController: MediaController) {
-        // Relaye les commandes (play/pause/next/previous) vers Deezer
         session.setCallback(object : MediaSession.Callback() {
             override fun onPlay() { sourceController.transportControls.play() }
             override fun onPause() { sourceController.transportControls.pause() }
@@ -69,7 +68,6 @@ class ColorProxyService : MediaBrowserService() {
             override fun onStop() { sourceController.transportControls.stop() }
         })
 
-        // Republie le titre/artiste mais avec l'artwork rose/violette
         val callback = object : MediaController.Callback() {
             override fun onMetadataChanged(metadata: MediaMetadata?) {
                 updateMetadata(metadata)
@@ -115,14 +113,14 @@ class ColorProxyService : MediaBrowserService() {
     override fun onGetRoot(
         clientPackageName: String,
         clientUid: Int,
-        rootHints: android.os.Bundle?
+        rootHints: Bundle?
     ): BrowserRoot {
         return BrowserRoot("root", null)
     }
 
     override fun onLoadChildren(
         parentId: String,
-        result: Result<MutableList<MediaBrowserCompat.MediaItem>>
+        result: Result<MutableList<MediaBrowser.MediaItem>>
     ) {
         result.sendResult(mutableListOf())
     }
