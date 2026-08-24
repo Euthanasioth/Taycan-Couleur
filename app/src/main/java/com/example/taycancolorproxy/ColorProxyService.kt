@@ -1,5 +1,7 @@
 package com.example.taycancolorproxy
 
+import android.content.ComponentName
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.media.MediaDescription
@@ -15,6 +17,11 @@ class ColorProxyService : MediaBrowserService() {
 
     private lateinit var session: MediaSession
     private var lastSourceMetadata: MediaMetadata? = null
+    private var deezerSourceController: MediaController? = null
+
+    private var deezerBrowser: MediaBrowser? = null
+    private var deezerPlaylists: MutableList<MediaBrowser.MediaItem> = mutableListOf()
+    private var pendingPlaylistResult: Result<MutableList<MediaBrowser.MediaItem>>? = null
 
     companion object {
         private var instance: ColorProxyService? = null
@@ -61,15 +68,23 @@ class ColorProxyService : MediaBrowserService() {
 
         session.setCallback(object : MediaSession.Callback() {
             override fun onPlayFromMediaId(mediaId: String, extras: Bundle?) {
-                selectColor(mediaId)
+                handleSelection(mediaId, extras)
             }
         })
 
         session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, 0))
     }
 
-    private fun selectColor(mediaId: String) {
-        val index = mediaId.toIntOrNull() ?: return
+    private fun handleSelection(mediaId: String, extras: Bundle?) {
+        if (mediaId.startsWith("color_")) {
+            selectColor(mediaId.removePrefix("color_"))
+        } else {
+            deezerSourceController?.transportControls?.playFromMediaId(mediaId, extras)
+        }
+    }
+
+    private fun selectColor(indexStr: String) {
+        val index = indexStr.toIntOrNull() ?: return
         if (index < 0 || index >= palette.size) return
         val (_, colors) = palette[index]
 
@@ -83,6 +98,8 @@ class ColorProxyService : MediaBrowserService() {
     }
 
     private fun attach(sourceController: MediaController) {
+        deezerSourceController = sourceController
+
         session.setCallback(object : MediaSession.Callback() {
             override fun onPlay() { sourceController.transportControls.play() }
             override fun onPause() { sourceController.transportControls.pause() }
@@ -90,7 +107,7 @@ class ColorProxyService : MediaBrowserService() {
             override fun onSkipToPrevious() { sourceController.transportControls.skipToPrevious() }
             override fun onStop() { sourceController.transportControls.stop() }
             override fun onPlayFromMediaId(mediaId: String, extras: Bundle?) {
-                selectColor(mediaId)
+                handleSelection(mediaId, extras)
             }
         })
 
@@ -113,6 +130,51 @@ class ColorProxyService : MediaBrowserService() {
             currentState?.state ?: PlaybackState.STATE_PAUSED,
             currentState?.position ?: 0
         ))
+
+        connectToDeezerBrowser()
+    }
+
+    private fun connectToDeezerBrowser() {
+        if (deezerBrowser?.isConnected == true) return
+        try {
+            val intent = Intent("android.media.browse.MediaBrowserService")
+            intent.setPackage("deezer.android.app")
+            val services = packageManager.queryIntentServices(intent, 0)
+            val serviceInfo = services.firstOrNull()?.serviceInfo ?: return
+            val component = ComponentName(serviceInfo.packageName, serviceInfo.name)
+
+            deezerBrowser = MediaBrowser(this, component, object : MediaBrowser.ConnectionCallback() {
+                override fun onConnected() {
+                    val root = deezerBrowser?.root ?: return
+                    deezerBrowser?.subscribe(root, object : MediaBrowser.SubscriptionCallback() {
+                        override fun onChildrenLoaded(
+                            parentId: String,
+                            children: MutableList<MediaBrowser.MediaItem>
+                        ) {
+                            deezerPlaylists = children
+                            pendingPlaylistResult?.sendResult(children)
+                            pendingPlaylistResult = null
+                            notifyChildrenChanged("playlists")
+                        }
+
+                        override fun onError(parentId: String) {
+                            pendingPlaylistResult?.sendResult(mutableListOf())
+                            pendingPlaylistResult = null
+                        }
+                    })
+                }
+
+                override fun onConnectionFailed() {
+                    deezerBrowser = null
+                    pendingPlaylistResult?.sendResult(mutableListOf())
+                    pendingPlaylistResult = null
+                }
+            }, null)
+            deezerBrowser?.connect()
+        } catch (e: Exception) {
+            pendingPlaylistResult?.sendResult(mutableListOf())
+            pendingPlaylistResult = null
+        }
     }
 
     private fun buildState(state: Int, position: Long): PlaybackState {
@@ -168,6 +230,14 @@ class ColorProxyService : MediaBrowserService() {
         return bitmap
     }
 
+    private fun makeFolder(id: String, title: String): MediaBrowser.MediaItem {
+        val description = MediaDescription.Builder()
+            .setMediaId(id)
+            .setTitle(title)
+            .build()
+        return MediaBrowser.MediaItem(description, MediaBrowser.MediaItem.FLAG_BROWSABLE)
+    }
+
     override fun onGetRoot(
         clientPackageName: String,
         clientUid: Int,
@@ -180,26 +250,43 @@ class ColorProxyService : MediaBrowserService() {
         parentId: String,
         result: Result<MutableList<MediaBrowser.MediaItem>>
     ) {
-        val items = mutableListOf<MediaBrowser.MediaItem>()
-
-        palette.forEachIndexed { index, entry ->
-            val (name, colors) = entry
-            val icon = makeGradientBitmap(200, 200, colors.first, colors.second)
-
-            val description = MediaDescription.Builder()
-                .setMediaId(index.toString())
-                .setTitle(name)
-                .setIconBitmap(icon)
-                .build()
-
-            items.add(MediaBrowser.MediaItem(description, MediaBrowser.MediaItem.FLAG_PLAYABLE))
+        when (parentId) {
+            "root" -> {
+                val items = mutableListOf<MediaBrowser.MediaItem>()
+                items.add(makeFolder("colors", "Couleurs"))
+                items.add(makeFolder("playlists", "Mes playlists Deezer"))
+                result.sendResult(items)
+            }
+            "colors" -> {
+                val items = mutableListOf<MediaBrowser.MediaItem>()
+                palette.forEachIndexed { index, entry ->
+                    val (name, colors) = entry
+                    val icon = makeGradientBitmap(200, 200, colors.first, colors.second)
+                    val description = MediaDescription.Builder()
+                        .setMediaId("color_$index")
+                        .setTitle(name)
+                        .setIconBitmap(icon)
+                        .build()
+                    items.add(MediaBrowser.MediaItem(description, MediaBrowser.MediaItem.FLAG_PLAYABLE))
+                }
+                result.sendResult(items)
+            }
+            "playlists" -> {
+                if (deezerPlaylists.isNotEmpty()) {
+                    result.sendResult(deezerPlaylists)
+                } else {
+                    result.detach()
+                    pendingPlaylistResult = result
+                    connectToDeezerBrowser()
+                }
+            }
+            else -> result.sendResult(mutableListOf())
         }
-
-        result.sendResult(items)
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        deezerBrowser?.disconnect()
         session.release()
         instance = null
     }
