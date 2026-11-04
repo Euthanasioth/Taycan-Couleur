@@ -13,6 +13,9 @@ import android.media.session.PlaybackState
 import android.os.Bundle
 import android.service.media.MediaBrowserService
 
+class Tone(val name: String, val c1: String, val c2: String)
+class Family(val name: String, val tones: List<Tone>)
+
 class ColorProxyService : MediaBrowserService() {
 
     private lateinit var session: MediaSession
@@ -29,27 +32,56 @@ class ColorProxyService : MediaBrowserService() {
             if (s != null) s.attach(sourceController) else pendingController = sourceController
         }
 
-        val palette = listOf(
-            "Rose / Violet" to Pair("#FF3DBB", "#8A2BE2"),
-            "Bleu" to Pair("#00C6FF", "#0072FF"),
-            "Vert" to Pair("#00F260", "#0575E6"),
-            "Orange" to Pair("#FF8C00", "#FF3D00"),
-            "Rouge" to Pair("#FF416C", "#FF4B2B"),
-            "Jaune" to Pair("#FFE259", "#FFA751"),
-            "Turquoise" to Pair("#00FFA3", "#00C2FF"),
-            "Violet foncé" to Pair("#7F00FF", "#E100FF"),
-            "Corail" to Pair("#FF9966", "#FF5E62"),
-            "Bleu nuit" to Pair("#0F2027", "#2C5364"),
-            "Rose pastel" to Pair("#FFAFBD", "#FFC3A0"),
-            "Vert lime" to Pair("#A8E063", "#56AB2F"),
-            "Or" to Pair("#FFD700", "#FFA500"),
-            "Cyan" to Pair("#00FFFF", "#0080FF"),
-            "Magenta" to Pair("#FF00CC", "#333399"),
-            "Bronze" to Pair("#C09B6D", "#8B5E3C"),
-            "Menthe" to Pair("#00B09B", "#96C93D"),
-            "Lavande" to Pair("#C471ED", "#F64F59"),
-            "Sunset" to Pair("#FF512F", "#F09819"),
-            "Noir / Argent" to Pair("#434343", "#B0B0B0")
+        private fun hsv(h: Float, s: Float, v: Float): String {
+            val hue = ((h % 360f) + 360f) % 360f
+            val c = Color.HSVToColor(floatArrayOf(hue, s, v))
+            return String.format("#%06X", 0xFFFFFF and c)
+        }
+
+        private fun makeFamily(name: String, hue: Float): Family {
+            val defs = listOf(
+                Triple("Très clair", 0.30f, 1.00f),
+                Triple("Clair", 0.50f, 1.00f),
+                Triple("Doux", 0.70f, 1.00f),
+                Triple("Vif", 1.00f, 1.00f),
+                Triple("Intense", 1.00f, 0.85f),
+                Triple("Profond", 1.00f, 0.65f),
+                Triple("Foncé", 0.90f, 0.45f),
+                Triple("Très foncé", 0.85f, 0.28f)
+            )
+            val tones = defs.map { (label, s, v) ->
+                Tone("$name - $label", hsv(hue - 8f, s, v), hsv(hue + 8f, s, v))
+            }
+            return Family(name, tones)
+        }
+
+        val families: List<Family> = listOf(
+            makeFamily("Rose", 330f),
+            makeFamily("Rouge", 0f),
+            makeFamily("Orange", 25f),
+            makeFamily("Jaune", 50f),
+            makeFamily("Vert", 130f),
+            makeFamily("Turquoise", 175f),
+            makeFamily("Bleu", 215f),
+            makeFamily("Mauve", 275f),
+            Family("Neutres", listOf(
+                Tone("Neutres - Blanc", "#FFFFFF", "#E6E6E6"),
+                Tone("Neutres - Gris clair", "#E0E0E0", "#BDBDBD"),
+                Tone("Neutres - Argent", "#B0B0B0", "#E8E8E8"),
+                Tone("Neutres - Gris", "#8A8A8A", "#5E5E5E"),
+                Tone("Neutres - Anthracite", "#434343", "#2B2B2B"),
+                Tone("Neutres - Noir", "#1A1A1A", "#000000")
+            )),
+            Family("Multicolores", listOf(
+                Tone("Multicolores - Rose et violet", "#FF3DBB", "#8A2BE2"),
+                Tone("Multicolores - Aurore", "#00C9A7", "#845EC2"),
+                Tone("Multicolores - Sunset", "#FF512F", "#F09819"),
+                Tone("Multicolores - Océan", "#2193B0", "#6DD5ED"),
+                Tone("Multicolores - Néon", "#00FFFF", "#FF00CC"),
+                Tone("Multicolores - Lave", "#FF4E00", "#EC9F05"),
+                Tone("Multicolores - Forêt", "#134E5E", "#71B280"),
+                Tone("Multicolores - Bonbon", "#FF9A9E", "#A18CD1")
+            ))
         )
     }
 
@@ -91,18 +123,26 @@ class ColorProxyService : MediaBrowserService() {
         }
     }
 
-    private fun selectColor(mediaId: String) {
-        val index = mediaId.toIntOrNull() ?: return
-        if (index < 0 || index >= palette.size) return
-        val (_, colors) = palette[index]
-
+    private fun applyColor(c1: String, c2: String) {
         getSharedPreferences("taycan_couleur", MODE_PRIVATE).edit()
-            .putInt("colorIndex", index)
-            .putString("color1", colors.first)
-            .putString("color2", colors.second)
+            .putString("color1", c1)
+            .putString("color2", c2)
             .apply()
-
         updateMetadata(lastSourceMetadata)
+    }
+
+    private fun selectColor(mediaId: String) {
+        if (mediaId == "random") {
+            val tone = families.random().tones.random()
+            applyColor(tone.c1, tone.c2)
+            return
+        }
+        if (!mediaId.startsWith("col_")) return
+        val parts = mediaId.split("_")
+        val familyIndex = parts.getOrNull(1)?.toIntOrNull() ?: return
+        val toneIndex = parts.getOrNull(2)?.toIntOrNull() ?: return
+        val tone = families.getOrNull(familyIndex)?.tones?.getOrNull(toneIndex) ?: return
+        applyColor(tone.c1, tone.c2)
     }
 
     private fun attach(sourceController: MediaController) {
@@ -201,7 +241,11 @@ class ColorProxyService : MediaBrowserService() {
         clientUid: Int,
         rootHints: Bundle?
     ): BrowserRoot {
-        return BrowserRoot("root", null)
+        val extras = Bundle()
+        extras.putBoolean("android.media.browse.CONTENT_STYLE_SUPPORTED", true)
+        extras.putInt("android.media.browse.CONTENT_STYLE_BROWSABLE_HINT", 2)
+        extras.putInt("android.media.browse.CONTENT_STYLE_PLAYABLE_HINT", 2)
+        return BrowserRoot("root", extras)
     }
 
     override fun onLoadChildren(
@@ -210,17 +254,39 @@ class ColorProxyService : MediaBrowserService() {
     ) {
         val items = mutableListOf<MediaBrowser.MediaItem>()
 
-        palette.forEachIndexed { index, entry ->
-            val (name, colors) = entry
-            val icon = makeGradientBitmap(200, 200, colors.first, colors.second)
-
-            val description = MediaDescription.Builder()
-                .setMediaId(index.toString())
-                .setTitle(name)
-                .setIconBitmap(icon)
+        if (parentId == "root") {
+            val randomIcon = makeGradientBitmap(200, 200, "#00FFFF", "#FF00CC")
+            val randomDesc = MediaDescription.Builder()
+                .setMediaId("random")
+                .setTitle("Aléatoire")
+                .setIconBitmap(randomIcon)
                 .build()
+            items.add(MediaBrowser.MediaItem(randomDesc, MediaBrowser.MediaItem.FLAG_PLAYABLE))
 
-            items.add(MediaBrowser.MediaItem(description, MediaBrowser.MediaItem.FLAG_PLAYABLE))
+            families.forEachIndexed { index, family ->
+                val sample = family.tones[minOf(3, family.tones.size - 1)]
+                val icon = makeGradientBitmap(200, 200, sample.c1, sample.c2)
+                val desc = MediaDescription.Builder()
+                    .setMediaId("fam_$index")
+                    .setTitle(family.name)
+                    .setIconBitmap(icon)
+                    .build()
+                items.add(MediaBrowser.MediaItem(desc, MediaBrowser.MediaItem.FLAG_BROWSABLE))
+            }
+        } else if (parentId.startsWith("fam_")) {
+            val familyIndex = parentId.removePrefix("fam_").toIntOrNull()
+            val family = if (familyIndex != null) families.getOrNull(familyIndex) else null
+            if (family != null) {
+                family.tones.forEachIndexed { toneIndex, tone ->
+                    val icon = makeGradientBitmap(200, 200, tone.c1, tone.c2)
+                    val desc = MediaDescription.Builder()
+                        .setMediaId("col_${familyIndex}_$toneIndex")
+                        .setTitle(tone.name)
+                        .setIconBitmap(icon)
+                        .build()
+                    items.add(MediaBrowser.MediaItem(desc, MediaBrowser.MediaItem.FLAG_PLAYABLE))
+                }
+            }
         }
 
         result.sendResult(items)
