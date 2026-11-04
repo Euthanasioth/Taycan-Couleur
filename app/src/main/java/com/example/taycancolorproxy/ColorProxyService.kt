@@ -255,6 +255,15 @@ class ColorProxyService : MediaBrowserService() {
         val items = mutableListOf<MediaBrowser.MediaItem>()
 
         if (parentId == "root") {
+            val sample = families[0].tones[3]
+            val icon = makeGradientBitmap(200, 200, sample.c1, sample.c2)
+            val desc = MediaDescription.Builder()
+                .setMediaId("tab_colors")
+                .setTitle("Couleurs")
+                .setIconBitmap(icon)
+                .build()
+            items.add(MediaBrowser.MediaItem(desc, MediaBrowser.MediaItem.FLAG_BROWSABLE))
+        } else if (parentId == "tab_colors") {
             val randomIcon = makeGradientBitmap(200, 200, "#00FFFF", "#FF00CC")
             val randomDesc = MediaDescription.Builder()
                 .setMediaId("random")
