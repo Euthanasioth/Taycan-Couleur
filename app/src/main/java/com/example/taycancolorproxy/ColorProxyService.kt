@@ -1,5 +1,6 @@
 package com.example.taycancolorproxy
 
+import android.content.ComponentName
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.media.MediaDescription
@@ -7,6 +8,7 @@ import android.media.MediaMetadata
 import android.media.browse.MediaBrowser
 import android.media.session.MediaController
 import android.media.session.MediaSession
+import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.os.Bundle
 import android.service.media.MediaBrowserService
@@ -15,12 +17,16 @@ class ColorProxyService : MediaBrowserService() {
 
     private lateinit var session: MediaSession
     private var lastSourceMetadata: MediaMetadata? = null
+    private var currentController: MediaController? = null
+    private var currentCallback: MediaController.Callback? = null
 
     companion object {
         private var instance: ColorProxyService? = null
+        private var pendingController: MediaController? = null
 
         fun attachSourceController(sourceController: MediaController) {
-            instance?.attach(sourceController)
+            val s = instance
+            if (s != null) s.attach(sourceController) else pendingController = sourceController
         }
 
         val palette = listOf(
@@ -66,6 +72,23 @@ class ColorProxyService : MediaBrowserService() {
         })
 
         session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, 0))
+
+        pendingController?.let {
+            attach(it)
+            pendingController = null
+        }
+        findDeezerNow()
+    }
+
+    private fun findDeezerNow() {
+        try {
+            val manager = getSystemService(MEDIA_SESSION_SERVICE) as MediaSessionManager
+            val component = ComponentName(this, NotificationListener::class.java)
+            val deezer = manager.getActiveSessions(component)
+                .firstOrNull { it.packageName == "deezer.android.app" }
+            if (deezer != null) attach(deezer)
+        } catch (e: Exception) {
+        }
     }
 
     private fun selectColor(mediaId: String) {
@@ -83,6 +106,10 @@ class ColorProxyService : MediaBrowserService() {
     }
 
     private fun attach(sourceController: MediaController) {
+        if (currentController?.sessionToken == sourceController.sessionToken) return
+        currentCallback?.let { currentController?.unregisterCallback(it) }
+        currentController = sourceController
+
         session.setCallback(object : MediaSession.Callback() {
             override fun onPlay() { sourceController.transportControls.play() }
             override fun onPause() { sourceController.transportControls.pause() }
@@ -106,6 +133,7 @@ class ColorProxyService : MediaBrowserService() {
             }
         }
         sourceController.registerCallback(callback)
+        currentCallback = callback
 
         updateMetadata(sourceController.metadata)
         val currentState = sourceController.playbackState
@@ -200,6 +228,7 @@ class ColorProxyService : MediaBrowserService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        currentCallback?.let { currentController?.unregisterCallback(it) }
         session.release()
         instance = null
     }
