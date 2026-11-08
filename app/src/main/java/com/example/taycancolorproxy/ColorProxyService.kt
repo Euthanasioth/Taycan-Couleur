@@ -22,6 +22,8 @@ class ColorProxyService : MediaBrowserService() {
     private var lastSourceMetadata: MediaMetadata? = null
     private var currentController: MediaController? = null
     private var currentCallback: MediaController.Callback? = null
+    private var lastMirroredState = -1
+    private var lastReassert = 0L
 
     companion object {
         private var instance: ColorProxyService? = null
@@ -123,6 +125,28 @@ class ColorProxyService : MediaBrowserService() {
         }
     }
 
+    private fun reassert() {
+        val now = System.currentTimeMillis()
+        if (now - lastReassert < 5000) return
+        lastReassert = now
+        try {
+            session.isActive = false
+            session.isActive = true
+        } catch (e: Exception) {
+        }
+        findDeezerNow()
+        val c = currentController ?: return
+        val st = c.playbackState
+        val s = st?.state ?: PlaybackState.STATE_PAUSED
+        val p = st?.position ?: 0
+        if (s == PlaybackState.STATE_PLAYING) {
+            session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, p))
+        }
+        session.setPlaybackState(buildState(s, p))
+        lastMirroredState = s
+        updateMetadata(c.metadata)
+    }
+
     private fun applyColor(c1: String, c2: String) {
         getSharedPreferences("taycan_couleur", MODE_PRIVATE).edit()
             .putString("color1", c1)
@@ -166,10 +190,13 @@ class ColorProxyService : MediaBrowserService() {
                 updateMetadata(metadata)
             }
             override fun onPlaybackStateChanged(state: PlaybackState?) {
-                session.setPlaybackState(buildState(
-                    state?.state ?: PlaybackState.STATE_PAUSED,
-                    state?.position ?: 0
-                ))
+                val s = state?.state ?: PlaybackState.STATE_PAUSED
+                val p = state?.position ?: 0
+                if (s == PlaybackState.STATE_PLAYING && lastMirroredState != PlaybackState.STATE_PLAYING) {
+                    session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, p))
+                }
+                lastMirroredState = s
+                session.setPlaybackState(buildState(s, p))
             }
         }
         sourceController.registerCallback(callback)
@@ -177,10 +204,9 @@ class ColorProxyService : MediaBrowserService() {
 
         updateMetadata(sourceController.metadata)
         val currentState = sourceController.playbackState
-        session.setPlaybackState(buildState(
-            currentState?.state ?: PlaybackState.STATE_PAUSED,
-            currentState?.position ?: 0
-        ))
+        val s0 = currentState?.state ?: PlaybackState.STATE_PAUSED
+        lastMirroredState = s0
+        session.setPlaybackState(buildState(s0, currentState?.position ?: 0))
     }
 
     private fun buildState(state: Int, position: Long): PlaybackState {
@@ -241,6 +267,7 @@ class ColorProxyService : MediaBrowserService() {
         clientUid: Int,
         rootHints: Bundle?
     ): BrowserRoot {
+        reassert()
         val extras = Bundle()
         extras.putBoolean("android.media.browse.CONTENT_STYLE_SUPPORTED", true)
         extras.putInt("android.media.browse.CONTENT_STYLE_BROWSABLE_HINT", 2)
