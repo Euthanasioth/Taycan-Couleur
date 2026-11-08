@@ -129,11 +129,6 @@ class ColorProxyService : MediaBrowserService() {
         val now = System.currentTimeMillis()
         if (now - lastReassert < 5000) return
         lastReassert = now
-        try {
-            session.isActive = false
-            session.isActive = true
-        } catch (e: Exception) {
-        }
         findDeezerNow()
         val c = currentController ?: return
         val st = c.playbackState
@@ -188,6 +183,7 @@ class ColorProxyService : MediaBrowserService() {
         val callback = object : MediaController.Callback() {
             override fun onMetadataChanged(metadata: MediaMetadata?) {
                 updateMetadata(metadata)
+                reassert()
             }
             override fun onPlaybackStateChanged(state: PlaybackState?) {
                 val s = state?.state ?: PlaybackState.STATE_PAUSED
