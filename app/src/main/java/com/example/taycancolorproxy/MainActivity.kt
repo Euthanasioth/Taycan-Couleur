@@ -1,8 +1,10 @@
 package com.example.taycancolorproxy
 
+import android.content.ComponentName
 import android.content.Intent
 import android.content.SharedPreferences
 import android.graphics.Color
+import android.media.session.MediaSessionManager
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
@@ -34,6 +36,27 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         }
         layout.addView(button)
+
+        val diagButton = Button(this)
+        diagButton.text = "Voir les sessions média actives"
+        val diagText = TextView(this)
+        diagText.textSize = 12f
+        diagButton.setOnClickListener {
+            try {
+                val manager = getSystemService(MEDIA_SESSION_SERVICE) as MediaSessionManager
+                val component = ComponentName(this, NotificationListener::class.java)
+                val sessions = manager.getActiveSessions(component)
+                val sb = StringBuilder()
+                sessions.forEachIndexed { i, c ->
+                    sb.append("${i + 1}. ${c.packageName} (état ${c.playbackState?.state})\n")
+                }
+                diagText.text = if (sb.isEmpty()) "Aucune session active" else sb.toString()
+            } catch (e: Exception) {
+                diagText.text = "Erreur : " + e.message
+            }
+        }
+        layout.addView(diagButton)
+        layout.addView(diagText)
 
         val colorLabel = TextView(this)
         colorLabel.setPadding(0, 60, 0, 20)
