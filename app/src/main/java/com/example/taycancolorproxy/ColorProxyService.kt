@@ -182,8 +182,8 @@ class ColorProxyService : MediaBrowserService() {
 
         val callback = object : MediaController.Callback() {
             override fun onMetadataChanged(metadata: MediaMetadata?) {
+                // Mise à jour immédiate de l'artwork personnalisé sans déclencher reassert()
                 updateMetadata(metadata)
-                reassert()
             }
             override fun onPlaybackStateChanged(state: PlaybackState?) {
                 val s = state?.state ?: PlaybackState.STATE_PAUSED
@@ -229,8 +229,11 @@ class ColorProxyService : MediaBrowserService() {
         builder.putString(MediaMetadata.METADATA_KEY_ARTIST, source.getString(MediaMetadata.METADATA_KEY_ARTIST))
         builder.putString(MediaMetadata.METADATA_KEY_ALBUM, source.getString(MediaMetadata.METADATA_KEY_ALBUM))
         builder.putLong(MediaMetadata.METADATA_KEY_DURATION, source.getLong(MediaMetadata.METADATA_KEY_DURATION))
+        
+        // Forçage systématique de toutes les clés d'images pour court-circuiter l'image originale de Deezer
         builder.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artwork)
         builder.putBitmap(MediaMetadata.METADATA_KEY_ART, artwork)
+        builder.putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, artwork)
 
         session.setMetadata(builder.build())
     }
@@ -303,7 +306,7 @@ class ColorProxyService : MediaBrowserService() {
                     .setTitle(family.name)
                     .setIconBitmap(icon)
                     .build()
-                items.add(MediaBrowser.MediaItem(desc, MediaBrowser.MediaItem.FLAG_BROWSABLE))
+            items.add(MediaBrowser.MediaItem(desc, MediaBrowser.MediaItem.FLAG_BROWSABLE))
             }
         } else if (parentId.startsWith("fam_")) {
             val familyIndex = parentId.removePrefix("fam_").toIntOrNull()
