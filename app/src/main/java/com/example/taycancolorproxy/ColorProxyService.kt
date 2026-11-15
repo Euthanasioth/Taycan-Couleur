@@ -24,6 +24,7 @@ class ColorProxyService : MediaBrowserService() {
     private var currentCallback: MediaController.Callback? = null
     private var lastMirroredState = -1
     private var lastReassert = 0L
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
 
     companion object {
         private var instance: ColorProxyService? = null
