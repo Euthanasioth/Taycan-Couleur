@@ -22,11 +22,15 @@ class ColorProxyService : MediaBrowserService() {
     private var lastSourceMetadata: MediaMetadata? = null
     private var currentController: MediaController? = null
     private var currentCallback: MediaController.Callback? = null
-    private var lastMirroredState = -1
     private var lastReassert = 0L
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val silent = SilentPlayer()
 
     companion object {
+        private const val PAUSE_KEEP_MS = 5 * 60 * 1000L
+        private const val STOP_KEEP_MS = 60 * 1000L
+        private const val PRE_KEEP_MS = 3 * 60 * 1000L
+
         private var instance: ColorProxyService? = null
         private var pendingController: MediaController? = null
 
@@ -113,6 +117,16 @@ class ColorProxyService : MediaBrowserService() {
             pendingController = null
         }
         findDeezerNow()
+
+        silent.start()
+        armSilentSafety()
+    }
+
+    private fun armSilentSafety() {
+        handler.postDelayed({
+            val st = currentController?.playbackState?.state
+            if (st != PlaybackState.STATE_PLAYING) silent.stop()
+        }, PRE_KEEP_MS)
     }
 
     private fun findDeezerNow() {
@@ -134,12 +148,11 @@ class ColorProxyService : MediaBrowserService() {
         val c = currentController ?: return
         val st = c.playbackState
         val s = st?.state ?: PlaybackState.STATE_PAUSED
-        val p = st?.position ?: 0
-        if (s == PlaybackState.STATE_PLAYING) {
-            session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, p))
+        var p: Long = st?.position ?: 0L
+        if (st != null && s == PlaybackState.STATE_PLAYING) {
+            p += ((android.os.SystemClock.elapsedRealtime() - st.lastPositionUpdateTime) * st.playbackSpeed).toLong()
         }
         session.setPlaybackState(buildState(s, p))
-        lastMirroredState = s
         updateMetadata(c.metadata)
     }
 
@@ -171,10 +184,19 @@ class ColorProxyService : MediaBrowserService() {
         currentController = sourceController
 
         session.setCallback(object : MediaSession.Callback() {
-            override fun onPlay() { sourceController.transportControls.play() }
+            override fun onPlay() {
+                silent.start()
+                sourceController.transportControls.play()
+            }
             override fun onPause() { sourceController.transportControls.pause() }
-            override fun onSkipToNext() { sourceController.transportControls.skipToNext() }
-            override fun onSkipToPrevious() { sourceController.transportControls.skipToPrevious() }
+            override fun onSkipToNext() {
+                silent.start()
+                sourceController.transportControls.skipToNext()
+            }
+            override fun onSkipToPrevious() {
+                silent.start()
+                sourceController.transportControls.skipToPrevious()
+            }
             override fun onStop() { sourceController.transportControls.stop() }
             override fun onPlayFromMediaId(mediaId: String, extras: Bundle?) {
                 selectColor(mediaId)
@@ -188,18 +210,22 @@ class ColorProxyService : MediaBrowserService() {
 
             override fun onPlaybackStateChanged(state: PlaybackState?) {
                 val s = state?.state ?: PlaybackState.STATE_PAUSED
-                val p = state?.position ?: 0
-                lastMirroredState = s
+                val p: Long = state?.position ?: 0L
                 session.setPlaybackState(buildState(s, p))
-                handler.removeCallbacksAndMessages(null)
-                if (s == PlaybackState.STATE_PLAYING) {
-                    handler.postDelayed({
-                        val st = currentController?.playbackState
-                        if (st != null && st.state == PlaybackState.STATE_PLAYING) {
-                            session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, st.position))
-                            session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, st.position))
-                        }
-                    }, 1500)
+                when (s) {
+                    PlaybackState.STATE_PLAYING -> {
+                        handler.removeCallbacksAndMessages(null)
+                        silent.start()
+                    }
+                    PlaybackState.STATE_PAUSED -> {
+                        handler.removeCallbacksAndMessages(null)
+                        handler.postDelayed({ silent.stop() }, PAUSE_KEEP_MS)
+                    }
+                    PlaybackState.STATE_STOPPED, PlaybackState.STATE_NONE -> {
+                        handler.removeCallbacksAndMessages(null)
+                        handler.postDelayed({ silent.stop() }, STOP_KEEP_MS)
+                    }
+                    else -> { }
                 }
             }
         }
@@ -209,8 +235,11 @@ class ColorProxyService : MediaBrowserService() {
         updateMetadata(sourceController.metadata)
         val currentState = sourceController.playbackState
         val s0 = currentState?.state ?: PlaybackState.STATE_PAUSED
-        lastMirroredState = s0
-        session.setPlaybackState(buildState(s0, currentState?.position ?: 0))
+        val p0: Long = currentState?.position ?: 0L
+        session.setPlaybackState(buildState(s0, p0))
+
+        silent.start()
+        armSilentSafety()
     }
 
     private fun buildState(state: Int, position: Long): PlaybackState {
@@ -336,6 +365,7 @@ class ColorProxyService : MediaBrowserService() {
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacksAndMessages(null)
+        silent.stop()
         currentCallback?.let { currentController?.unregisterCallback(it) }
         session.release()
         instance = null
