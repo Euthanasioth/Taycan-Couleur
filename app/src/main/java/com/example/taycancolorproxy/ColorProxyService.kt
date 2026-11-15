@@ -183,9 +183,9 @@ class ColorProxyService : MediaBrowserService() {
 
         val callback = object : MediaController.Callback() {
             override fun onMetadataChanged(metadata: MediaMetadata?) {
-                // Mise à jour immédiate de l'artwork personnalisé sans déclencher reassert()
                 updateMetadata(metadata)
             }
+
             override fun onPlaybackStateChanged(state: PlaybackState?) {
                 val s = state?.state ?: PlaybackState.STATE_PAUSED
                 val p = state?.position ?: 0
@@ -195,13 +195,14 @@ class ColorProxyService : MediaBrowserService() {
                 if (s == PlaybackState.STATE_PLAYING) {
                     handler.postDelayed({
                         val st = currentController?.playbackState
-                        if (st?.state == PlaybackState.STATE_PLAYING) {
+                        if (st != null && st.state == PlaybackState.STATE_PLAYING) {
                             session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, st.position))
                             session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, st.position))
                         }
                     }, 1500)
                 }
             }
+        }
         sourceController.registerCallback(callback)
         currentCallback = callback
 
@@ -236,8 +237,6 @@ class ColorProxyService : MediaBrowserService() {
         builder.putString(MediaMetadata.METADATA_KEY_ARTIST, source.getString(MediaMetadata.METADATA_KEY_ARTIST))
         builder.putString(MediaMetadata.METADATA_KEY_ALBUM, source.getString(MediaMetadata.METADATA_KEY_ALBUM))
         builder.putLong(MediaMetadata.METADATA_KEY_DURATION, source.getLong(MediaMetadata.METADATA_KEY_DURATION))
-        
-        // Forçage systématique de toutes les clés d'images pour court-circuiter l'image originale de Deezer
         builder.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artwork)
         builder.putBitmap(MediaMetadata.METADATA_KEY_ART, artwork)
         builder.putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, artwork)
@@ -313,7 +312,7 @@ class ColorProxyService : MediaBrowserService() {
                     .setTitle(family.name)
                     .setIconBitmap(icon)
                     .build()
-            items.add(MediaBrowser.MediaItem(desc, MediaBrowser.MediaItem.FLAG_BROWSABLE))
+                items.add(MediaBrowser.MediaItem(desc, MediaBrowser.MediaItem.FLAG_BROWSABLE))
             }
         } else if (parentId.startsWith("fam_")) {
             val familyIndex = parentId.removePrefix("fam_").toIntOrNull()
@@ -336,6 +335,7 @@ class ColorProxyService : MediaBrowserService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        handler.removeCallbacksAndMessages(null)
         currentCallback?.let { currentController?.unregisterCallback(it) }
         session.release()
         instance = null
