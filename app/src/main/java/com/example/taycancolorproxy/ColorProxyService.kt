@@ -189,13 +189,19 @@ class ColorProxyService : MediaBrowserService() {
             override fun onPlaybackStateChanged(state: PlaybackState?) {
                 val s = state?.state ?: PlaybackState.STATE_PAUSED
                 val p = state?.position ?: 0
-                if (s == PlaybackState.STATE_PLAYING && lastMirroredState != PlaybackState.STATE_PLAYING) {
-                    session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, p))
-                }
                 lastMirroredState = s
                 session.setPlaybackState(buildState(s, p))
+                handler.removeCallbacksAndMessages(null)
+                if (s == PlaybackState.STATE_PLAYING) {
+                    handler.postDelayed({
+                        val st = currentController?.playbackState
+                        if (st?.state == PlaybackState.STATE_PLAYING) {
+                            session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, st.position))
+                            session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, st.position))
+                        }
+                    }, 1500)
+                }
             }
-        }
         sourceController.registerCallback(callback)
         currentCallback = callback
 
