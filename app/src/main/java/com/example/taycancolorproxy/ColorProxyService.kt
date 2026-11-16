@@ -185,10 +185,8 @@ class ColorProxyService : MediaBrowserService() {
     private fun handlePaused(p: Long) {
         handler.removeCallbacksAndMessages(null)
         cancelClaim()
-        // On active immédiatement le maintien de l'illusion visuelle (STATE_PLAYING à vitesse 0f)
         startHold()
         
-        // Garde-fou batterie : au bout de 30 minutes, on relâche vraiment la session
         handler.postDelayed({
             stopHold()
             silent.stop()
@@ -271,9 +269,12 @@ class ColorProxyService : MediaBrowserService() {
 
         session.setCallback(object : MediaSession.Callback() {
             override fun onPlay() {
-                Logger.log("commande voiture : lecture")
+                Logger.log("commande voiture : lecture demandée")
+                stopHold()
                 silent.start()
                 sourceController.transportControls.play()
+                val st = sourceController.playbackState
+                session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, estimatedPosition(st), 1f))
             }
             override fun onPause() {
                 Logger.log("commande voiture : pause demandée")
@@ -282,15 +283,20 @@ class ColorProxyService : MediaBrowserService() {
             }
             override fun onSkipToNext() {
                 Logger.log("commande voiture : suivant")
+                stopHold()
                 silent.start()
                 sourceController.transportControls.skipToNext()
             }
             override fun onSkipToPrevious() {
                 Logger.log("commande voiture : précédent")
+                stopHold()
                 silent.start()
                 sourceController.transportControls.skipToPrevious()
             }
-            override fun onStop() { sourceController.transportControls.stop() }
+            override fun onStop() { 
+                stopHold()
+                sourceController.transportControls.stop() 
+            }
             override fun onPlayFromMediaId(mediaId: String, extras: Bundle?) {
                 selectColor(mediaId)
             }
