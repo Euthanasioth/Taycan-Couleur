@@ -43,7 +43,6 @@ class ColorProxyService : MediaBrowserService() {
         private const val PAUSE_KEEP_MS = 30 * 60 * 1000L
         private const val STOP_KEEP_MS = 60 * 1000L
         private const val PRE_KEEP_MS = 3 * 60 * 1000L
-        private const val HOLD_DELAY_MS = 350L
         private const val CLAIM_MS = 500L
 
         private var instance: ColorProxyService? = null
@@ -186,13 +185,10 @@ class ColorProxyService : MediaBrowserService() {
     private fun handlePaused(p: Long) {
         handler.removeCallbacksAndMessages(null)
         cancelClaim()
-        if (!holdActive) {
-            session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, p, 0f))
-        }
-        handler.postDelayed({
-            val st = currentController?.playbackState
-            if (st?.state == PlaybackState.STATE_PAUSED) startHold()
-        }, HOLD_DELAY_MS)
+        // On active immédiatement le maintien de l'illusion visuelle (STATE_PLAYING à vitesse 0f)
+        startHold()
+        
+        // Garde-fou batterie : au bout de 30 minutes, on relâche vraiment la session
         handler.postDelayed({
             stopHold()
             silent.stop()
@@ -280,14 +276,9 @@ class ColorProxyService : MediaBrowserService() {
                 sourceController.transportControls.play()
             }
             override fun onPause() {
-                val st = sourceController.playbackState?.state
-                Logger.log("commande voiture : pause (Deezer état=$st)")
-                if (st == PlaybackState.STATE_PAUSED) {
-                    silent.start()
-                    sourceController.transportControls.play()
-                } else {
-                    sourceController.transportControls.pause()
-                }
+                Logger.log("commande voiture : pause demandée")
+                silent.start()
+                sourceController.transportControls.pause()
             }
             override fun onSkipToNext() {
                 Logger.log("commande voiture : suivant")
