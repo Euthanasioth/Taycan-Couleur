@@ -271,7 +271,7 @@ class ColorProxyService : MediaBrowserService() {
         session.setPlaybackState(buildState(currentState, position))
 
 updateMetadata(lastSourceMetadata)
-reassert()
+}
 
 when (currentState) {
     PlaybackState.STATE_PLAYING -> {
