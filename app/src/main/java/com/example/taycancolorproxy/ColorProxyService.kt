@@ -279,11 +279,15 @@ class ColorProxyService : MediaBrowserService() {
             }
 
             override fun onPlaybackStateChanged(state: PlaybackState?) {
-                val currentState = state?.state ?: PlaybackState.STATE_PAUSED
-                val position = state?.position ?: 0L
-                session.setPlaybackState(buildState(currentState, position))
+    val currentState = state?.state ?: PlaybackState.STATE_PAUSED
+    val position = state?.position ?: 0L
 
-                when (currentState) {
+    session.setPlaybackState(buildState(currentState, position))
+
+    updateMetadata(lastSourceMetadata)
+    scheduleReassertBurst()
+
+    when (currentState) {
                     PlaybackState.STATE_PLAYING -> {
                         mainHandler.removeCallbacks(stopSilentRunnable)
                         mainHandler.removeCallbacks(silentSafetyRunnable)
