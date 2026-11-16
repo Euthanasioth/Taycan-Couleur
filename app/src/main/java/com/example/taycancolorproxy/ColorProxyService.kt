@@ -20,14 +20,9 @@ class ColorProxyService : MediaBrowserService() {
 
     private lateinit var session: MediaSession
     private var currentController: MediaController? = null
-    private var currentCallback: MediaController.Callback? = null
-    private var lastReassert = 0L
-    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private val silent = SilentPlayer()
 
     companion object {
-        private const val STOP_KEEP_MS = 60 * 1000L
-
         private var instance: ColorProxyService? = null
         private var pendingController: MediaController? = null
 
@@ -93,7 +88,7 @@ class ColorProxyService : MediaBrowserService() {
         super.onCreate()
         instance = this
         Logger.init(this)
-        Logger.log("service créé (mur anti-jaquette)")
+        Logger.log("service créé (commandes + affichage indépendant)")
 
         session = MediaSession(this, "TaycanColorProxy").apply {
             setFlags(
@@ -101,6 +96,31 @@ class ColorProxyService : MediaBrowserService() {
                 MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS
             )
             setCallback(object : MediaSession.Callback() {
+                override fun onPlay() {
+                    Logger.log("Action : PLAY vers Deezer")
+                    silent.start()
+                    currentController?.transportControls?.play()
+                    updatePlaybackState(PlaybackState.STATE_PLAYING)
+                }
+                override fun onPause() {
+                    Logger.log("Action : PAUSE vers Deezer")
+                    currentController?.transportControls?.pause()
+                    updatePlaybackState(PlaybackState.STATE_PAUSED)
+                }
+                override fun onSkipToNext() {
+                    Logger.log("Action : SUIVANT vers Deezer")
+                    silent.start()
+                    currentController?.transportControls?.skipToNext()
+                }
+                override fun onSkipToPrevious() {
+                    Logger.log("Action : PRÉCÉDENT vers Deezer")
+                    silent.start()
+                    currentController?.transportControls?.skipToPrevious()
+                }
+                override fun onStop() {
+                    currentController?.transportControls?.stop()
+                    updatePlaybackState(PlaybackState.STATE_STOPPED)
+                }
                 override fun onPlayFromMediaId(mediaId: String, extras: Bundle?) {
                     selectColor(mediaId)
                 }
@@ -109,7 +129,8 @@ class ColorProxyService : MediaBrowserService() {
             sessionToken = sessionToken
         }
 
-        session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, 0L))
+        updatePlaybackState(PlaybackState.STATE_PAUSED)
+        updateMetadata()
 
         pendingController?.let {
             attach(it)
@@ -117,7 +138,6 @@ class ColorProxyService : MediaBrowserService() {
         }
         findDeezerNow()
         silent.start()
-        updateForcedMetadata()
     }
 
     private fun findDeezerNow() {
@@ -131,18 +151,22 @@ class ColorProxyService : MediaBrowserService() {
         }
     }
 
-    private fun reassert() {
-        val now = System.currentTimeMillis()
-        if (now - lastReassert < 5000) return
-        lastReassert = now
-        findDeezerNow()
-        val c = currentController ?: return
-        val st = c.playbackState
-        val s = st?.state ?: PlaybackState.STATE_PAUSED
-        val p = st?.position ?: 0L
-        session.setPlaybackState(buildState(s, p))
-        // On réimpose notre couleur en permanence
-        updateForcedMetadata()
+    private fun attach(sourceController: MediaController) {
+        currentController = sourceController
+        Logger.log("Contrôleur Deezer lié pour les commandes")
+    }
+
+    private fun updatePlaybackState(state: Int) {
+        val stateBuilder = PlaybackState.Builder()
+            .setActions(
+                PlaybackState.ACTION_PLAY or
+                PlaybackState.ACTION_PAUSE or
+                PlaybackState.ACTION_SKIP_TO_NEXT or
+                PlaybackState.ACTION_SKIP_TO_PREVIOUS or
+                PlaybackState.ACTION_PLAY_FROM_MEDIA_ID
+            )
+            .setState(state, 0L, 1.0f)
+        session.setPlaybackState(stateBuilder.build())
     }
 
     private fun applyColor(c1: String, c2: String) {
@@ -150,7 +174,7 @@ class ColorProxyService : MediaBrowserService() {
             .putString("color1", c1)
             .putString("color2", c2)
             .apply()
-        updateForcedMetadata()
+        updateMetadata()
     }
 
     private fun selectColor(mediaId: String) {
@@ -167,91 +191,7 @@ class ColorProxyService : MediaBrowserService() {
         applyColor(tone.c1, tone.c2)
     }
 
-    private fun attach(sourceController: MediaController) {
-        if (currentController?.sessionToken == sourceController.sessionToken) return
-        Logger.log("rattaché à Deezer (commandes seules)")
-        currentCallback?.let { currentController?.unregisterCallback(it) }
-        currentController = sourceController
-
-        // Les commandes de la voiture pilotent DIRECTEMENT Deezer
-        session.setCallback(object : MediaSession.Callback() {
-            override fun onPlay() {
-                Logger.log("proxy -> PLAY")
-                silent.start()
-                sourceController.transportControls.play()
-            }
-            override fun onPause() {
-                Logger.log("proxy -> PAUSE")
-                sourceController.transportControls.pause()
-            }
-            override fun onSkipToNext() {
-                Logger.log("proxy -> SUIVANT")
-                silent.start()
-                sourceController.transportControls.skipToNext()
-            }
-            override fun onSkipToPrevious() {
-                Logger.log("proxy -> PRÉCÉDENT")
-                silent.start()
-                sourceController.transportControls.skipToPrevious()
-            }
-            override fun onStop() { 
-                sourceController.transportControls.stop() 
-            }
-            override fun onPlayFromMediaId(mediaId: String, extras: Bundle?) {
-                selectColor(mediaId)
-            }
-        })
-
-        // On écoute uniquement l'état de lecture de Deezer pour répercuter Play/Pause fidèlement, 
-        // MAIS on ignore totalement ses métadonnées et ses images !
-        val callback = object : MediaController.Callback() {
-            override fun onMetadataChanged(metadata: MediaMetadata?) {
-                // IGNORÉ VOLONTAIREMENT : Deezer ne touchera plus jamais à l'affichage !
-                updateForcedMetadata()
-            }
-
-            override fun onPlaybackStateChanged(state: PlaybackState?) {
-                val s = state?.state ?: PlaybackState.STATE_PAUSED
-                val p: Long = state?.position ?: 0L
-                Logger.log("Deezer état=$s -> Répercuté")
-
-                session.setPlaybackState(buildState(s, p))
-
-                if (s == PlaybackState.STATE_PLAYING) {
-                    silent.start()
-                } else if (s == PlaybackState.STATE_STOPPED || s == PlaybackState.STATE_NONE) {
-                    handler.postDelayed({ silent.stop() }, STOP_KEEP_MS)
-                }
-            }
-        }
-        sourceController.registerCallback(callback)
-        currentCallback = callback
-
-        // État initial
-        val currentState = sourceController.playbackState
-        val s0 = currentState?.state ?: PlaybackState.STATE_PAUSED
-        val p0: Long = currentState?.position ?: 0L
-        session.setPlaybackState(buildState(s0, p0))
-
-        silent.start()
-        updateForcedMetadata()
-    }
-
-    private fun buildState(state: Int, position: Long, speed: Float = 1f): PlaybackState {
-        return PlaybackState.Builder()
-            .setActions(
-                PlaybackState.ACTION_PLAY or
-                PlaybackState.ACTION_PAUSE or
-                PlaybackState.ACTION_SKIP_TO_NEXT or
-                PlaybackState.ACTION_SKIP_TO_PREVIOUS or
-                PlaybackState.ACTION_PLAY_FROM_MEDIA_ID
-            )
-            .setState(state, position, speed)
-            .build()
-    }
-
-    private fun updateForcedMetadata() {
-        // LE MUR ANTI-JAQUETTE : On force l'affichage de notre dégradé et de notre texte personnalisé.
+    private fun updateMetadata() {
         val artwork = makeColorArtwork(1000, 1000)
 
         val builder = MediaMetadata.Builder()
@@ -295,7 +235,6 @@ class ColorProxyService : MediaBrowserService() {
         rootHints: Bundle?
     ): BrowserRoot {
         Logger.log("onGetRoot depuis $clientPackageName")
-        reassert()
         val extras = Bundle()
         extras.putBoolean("android.media.browse.CONTENT_STYLE_SUPPORTED", true)
         extras.putInt("android.media.browse.CONTENT_STYLE_BROWSABLE_HINT", 2)
@@ -359,9 +298,7 @@ class ColorProxyService : MediaBrowserService() {
     override fun onDestroy() {
         super.onDestroy()
         Logger.log("service détruit")
-        handler.removeCallbacksAndMessages(null)
         silent.stop()
-        currentCallback?.let { currentController?.unregisterCallback(it) }
         session.release()
         instance = null
     }
