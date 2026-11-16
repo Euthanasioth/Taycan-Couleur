@@ -278,10 +278,8 @@ class ColorProxyService : MediaBrowserService() {
             }
             override fun onPause() {
                 Logger.log("commande voiture : pause demandée")
-                // Si on était en train de simuler la lecture, un appui pause doit vraiment dire à Deezer de pauser ou basculer
                 val deezerState = sourceController.playbackState?.state
                 if (holdActive && deezerState == PlaybackState.STATE_PAUSED) {
-                    // Si Deezer est déjà pauser mais qu'on tenait l'écran, un clic redémarre
                     onPlay()
                 } else {
                     silent.start()
@@ -322,6 +320,7 @@ class ColorProxyService : MediaBrowserService() {
                 Logger.log("Deezer : état=$s")
                 when (s) {
                     PlaybackState.STATE_PLAYING -> {
+                        // VRAI RECOURS : Seul un vrai STATE_PLAYING ou un ordre explicite arrête le hold
                         handler.removeCallbacksAndMessages(null)
                         val wasHold = holdActive
                         stopHold()
@@ -335,7 +334,8 @@ class ColorProxyService : MediaBrowserService() {
                     PlaybackState.STATE_PAUSED -> {
                         handlePaused(p)
                     }
-                    PlaybackState.STATE_STOPPED, PlaybackState.STATE_NONE -> {
+                    PlaybackState.STATE_STOPPED -> {
+                        // On ne stoppe le hold que si c'est un vrai STOPPED confirmé, pas des états transitoires
                         handler.removeCallbacksAndMessages(null)
                         cancelClaim()
                         stopHold()
@@ -343,10 +343,11 @@ class ColorProxyService : MediaBrowserService() {
                         handler.postDelayed({ silent.stop() }, STOP_KEEP_MS)
                     }
                     else -> {
-                        handler.removeCallbacksAndMessages(null)
-                        cancelClaim()
-                        stopHold()
-                        session.setPlaybackState(buildState(s, p))
+                        // Pour tous les autres états bizarres/transitoires (BUFFERING, NONE, etc.), 
+                        // si on était en pause tenue, ON NE FAIT RIEN pour ne pas casser l'illusion !
+                        if (!holdActive) {
+                            session.setPlaybackState(buildState(s, p))
+                        }
                     }
                 }
             }
