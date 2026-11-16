@@ -44,7 +44,9 @@ class NotificationListener : NotificationListenerService() {
     }
 
     private fun pickDeezer(controllers: List<MediaController>?) {
-        val deezer = controllers?.firstOrNull { it.packageName == "deezer.android.app" } ?: return
-        ColorProxyService.attachSourceController(deezer)
-    }
+    val deezer = controllers?.firstOrNull { it.packageName == "deezer.android.app" } ?: return
+    // Plus besoin d'attacher un contrôleur statique, le service le cherche à la volée lors des clics !
+    Logger.log("Deezer détecté par NotificationListener")
+}
+
 }
