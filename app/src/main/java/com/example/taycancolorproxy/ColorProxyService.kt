@@ -250,49 +250,36 @@ class ColorProxyService : MediaBrowserService() {
                 updateMetadata(metadata)
             }
 
-            override fun onPlaybackStateChanged(state: PlaybackState?) {
-                val s = state?.state ?: PlaybackState.STATE_PAUSED
+                        override fun onPlaybackStateChanged(state: PlaybackState?) {
+                val realState = state?.state ?: PlaybackState.STATE_PAUSED
                 val p: Long = state?.position ?: 0L
-                when (s) {
+
+                when (realState) {
                     PlaybackState.STATE_PLAYING -> {
                         handler.removeCallbacksAndMessages(null)
-                        val wasHold = holdActive
                         stopHold()
                         silent.start()
-                        if (wasHold) {
-                            session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, p, 0f))
-                            tickHandler.postDelayed({
-                                val st = currentController?.playbackState
-                                if (st != null && st.state == PlaybackState.STATE_PLAYING) {
-                                    session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, st.position, 1f))
-                                }
-                            }, 250)
-                        } else {
-                            session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, p, 1f))
-                        }
+                        claim()
+                        handler.postDelayed({ claim() }, 1500)
                     }
                     PlaybackState.STATE_PAUSED -> {
                         handler.removeCallbacksAndMessages(null)
-                        startHold()
+                        claimHandler.removeCallbacksAndMessages(null)
+                        stopHold()
+                        session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, p, 0f))
                         handler.postDelayed({
-                            stopHold()
                             silent.stop()
-                            val st = currentController?.playbackState
-                            session.setPlaybackState(
-                                buildState(PlaybackState.STATE_PAUSED, st?.position ?: p)
-                            )
+                            session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, p))
                         }, PAUSE_KEEP_MS)
                     }
-                    PlaybackState.STATE_STOPPED, PlaybackState.STATE_NONE -> {
+                    else -> {
                         handler.removeCallbacksAndMessages(null)
                         stopHold()
-                        session.setPlaybackState(buildState(s, p))
+                        session.setPlaybackState(buildState(realState, p))
                         handler.postDelayed({ silent.stop() }, STOP_KEEP_MS)
                     }
-                    else -> session.setPlaybackState(buildState(s, p))
                 }
             }
-        }
         sourceController.registerCallback(callback)
         currentCallback = callback
 
