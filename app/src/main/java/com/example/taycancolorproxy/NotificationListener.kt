@@ -4,49 +4,35 @@ import android.content.ComponentName
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.service.notification.NotificationListenerService
-import android.service.notification.StatusBarNotification
 
 class NotificationListener : NotificationListenerService() {
 
-    private var manager: MediaSessionManager? = null
-    private var component: ComponentName? = null
-
-    private val sessionsListener =
-        MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
-            pickDeezer(controllers)
-        }
-
     override fun onListenerConnected() {
         super.onListenerConnected()
-        manager = getSystemService(MEDIA_SESSION_SERVICE) as MediaSessionManager
-        component = ComponentName(this, NotificationListener::class.java)
-        try {
-            manager?.addOnActiveSessionsChangedListener(sessionsListener, component)
-            pickDeezer(manager?.getActiveSessions(component))
-        } catch (e: SecurityException) {
-        }
+        findAndAttachDeezer()
     }
 
-    override fun onListenerDisconnected() {
+    override fun onActiveSessionsChanged(controllers: List<MediaController>?) {
+        super.onActiveSessionsChanged(controllers)
+        findAndAttachDeezer(controllers)
+    }
+
+    private fun findAndAttachDeezer(existingControllers: List<MediaController>? = null) {
         try {
-            manager?.removeOnActiveSessionsChangedListener(sessionsListener)
+            val manager = getSystemService(MEDIA_SESSION_SERVICE) as MediaSessionManager
+            // On récupère les sessions actives filtrées par notre composant
+            val controllers = existingControllers ?: manager.getActiveSessions(ComponentName(this, NotificationListener::class.java))
+            
+            // On cherche spécifiquement Deezer
+            val deezerController = controllers.firstOrNull { it.packageName == "deezer.android.app" }
+            
+            if (deezerController != null) {
+                Logger.log("Deezer trouvé et attaché au proxy de couleur")
+                // On transmet le contrôleur au service pour que les boutons pilotent Deezer
+                ColorProxyService.attachSourceController(deezerController)
+            }
         } catch (e: Exception) {
-        }
-        super.onListenerDisconnected()
-    }
-
-    override fun onNotificationPosted(sbn: StatusBarNotification?) {
-        super.onNotificationPosted(sbn)
-        try {
-            pickDeezer(manager?.getActiveSessions(component))
-        } catch (e: SecurityException) {
+            Logger.log("Erreur lors de la recherche de Deezer : ${e.message}")
         }
     }
-
-    private fun pickDeezer(controllers: List<MediaController>?) {
-    val deezer = controllers?.firstOrNull { it.packageName == "deezer.android.app" } ?: return
-    // Plus besoin d'attacher un contrôleur statique, le service le cherche à la volée lors des clics !
-    Logger.log("Deezer détecté par NotificationListener")
-}
-
 }
