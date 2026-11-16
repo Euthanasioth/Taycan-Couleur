@@ -278,8 +278,15 @@ class ColorProxyService : MediaBrowserService() {
             }
             override fun onPause() {
                 Logger.log("commande voiture : pause demandée")
-                silent.start()
-                sourceController.transportControls.pause()
+                // Si on était en train de simuler la lecture, un appui pause doit vraiment dire à Deezer de pauser ou basculer
+                val deezerState = sourceController.playbackState?.state
+                if (holdActive && deezerState == PlaybackState.STATE_PAUSED) {
+                    // Si Deezer est déjà pauser mais qu'on tenait l'écran, un clic redémarre
+                    onPlay()
+                } else {
+                    silent.start()
+                    sourceController.transportControls.pause()
+                }
             }
             override fun onSkipToNext() {
                 Logger.log("commande voiture : suivant")
@@ -293,6 +300,8 @@ class ColorProxyService : MediaBrowserService() {
                 silent.start()
                 sourceController.transportControls.skipToPrevious()
             }
+            override fun onFastForward() { onPlay() }
+            override fun onRewind() { onPlay() }
             override fun onStop() { 
                 stopHold()
                 sourceController.transportControls.stop() 
