@@ -11,6 +11,8 @@ import android.media.session.MediaSession
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.service.media.MediaBrowserService
 
 class Tone(val name: String, val c1: String, val c2: String)
@@ -23,8 +25,16 @@ class ColorProxyService : MediaBrowserService() {
     private var currentController: MediaController? = null
     private var currentCallback: MediaController.Callback? = null
     private var lastReassert = 0L
-    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val handler = Handler(Looper.getMainLooper())
     private val silent = SilentPlayer()
+
+    // Boucle agressive pour réaffirmer nos métadonnées en continu et empêcher Deezer de s'incruster
+    private val antiDeezerRunnable = object : Runnable {
+        override fun run() {
+            reassertVisuals()
+            handler.postDelayed(this, 1500L) // Toutes les 1.5 secondes
+        }
+    }
 
     companion object {
         private const val PAUSE_KEEP_MS = 5 * 60 * 1000L
@@ -120,6 +130,9 @@ class ColorProxyService : MediaBrowserService() {
 
         silent.start()
         armSilentSafety()
+
+        // Lancement du marteau-pilon anti-Deezer
+        handler.postDelayed(antiDeezerRunnable, 1500L)
     }
 
     private fun armSilentSafety() {
@@ -145,15 +158,20 @@ class ColorProxyService : MediaBrowserService() {
         if (now - lastReassert < 5000) return
         lastReassert = now
         findDeezerNow()
-        val c = currentController ?: return
-        val st = c.playbackState
+        reassertVisuals()
+    }
+
+    private fun reassertVisuals() {
+        findDeezerNow()
+        val c = currentController
+        val st = c?.playbackState
         val s = st?.state ?: PlaybackState.STATE_PAUSED
         var p: Long = st?.position ?: 0L
         if (st != null && s == PlaybackState.STATE_PLAYING) {
             p += ((android.os.SystemClock.elapsedRealtime() - st.lastPositionUpdateTime) * st.playbackSpeed).toLong()
         }
         session.setPlaybackState(buildState(s, p))
-        updateMetadata(c.metadata)
+        updateMetadata(c?.metadata ?: lastSourceMetadata)
     }
 
     private fun applyColor(c1: String, c2: String) {
@@ -212,21 +230,16 @@ class ColorProxyService : MediaBrowserService() {
                 val s = state?.state ?: PlaybackState.STATE_PAUSED
                 val p: Long = state?.position ?: 0L
                 session.setPlaybackState(buildState(s, p))
-                
-                // Verrouillage visuel : on réapplique nos métadonnées colorées à chaque changement d'état (y compris la pause)
                 updateMetadata(currentController?.metadata)
 
                 when (s) {
                     PlaybackState.STATE_PLAYING -> {
-                        handler.removeCallbacksAndMessages(null)
                         silent.start()
                     }
                     PlaybackState.STATE_PAUSED -> {
-                        handler.removeCallbacksAndMessages(null)
                         handler.postDelayed({ silent.stop() }, PAUSE_KEEP_MS)
                     }
                     PlaybackState.STATE_STOPPED, PlaybackState.STATE_NONE -> {
-                        handler.removeCallbacksAndMessages(null)
                         handler.postDelayed({ silent.stop() }, STOP_KEEP_MS)
                     }
                     else -> { }
@@ -260,16 +273,18 @@ class ColorProxyService : MediaBrowserService() {
     }
 
     private fun updateMetadata(source: MediaMetadata?) {
-        if (source == null) return
-        lastSourceMetadata = source
+        if (source != null) {
+            lastSourceMetadata = source
+        }
+        val fallbackSource = lastSourceMetadata
 
         val artwork = makeColorArtwork(1000, 1000)
 
         val builder = MediaMetadata.Builder()
-        builder.putString(MediaMetadata.METADATA_KEY_TITLE, source.getString(MediaMetadata.METADATA_KEY_TITLE))
-        builder.putString(MediaMetadata.METADATA_KEY_ARTIST, source.getString(MediaMetadata.METADATA_KEY_ARTIST))
-        builder.putString(MediaMetadata.METADATA_KEY_ALBUM, source.getString(MediaMetadata.METADATA_KEY_ALBUM))
-        builder.putLong(MediaMetadata.METADATA_KEY_DURATION, source.getLong(MediaMetadata.METADATA_KEY_DURATION))
+        builder.putString(MediaMetadata.METADATA_KEY_TITLE, fallbackSource?.getString(MediaMetadata.METADATA_KEY_TITLE) ?: "Ambiance Taycan")
+        builder.putString(MediaMetadata.METADATA_KEY_ARTIST, fallbackSource?.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: "Contrôle Couleur")
+        builder.putString(MediaMetadata.METADATA_KEY_ALBUM, fallbackSource?.getString(MediaMetadata.METADATA_KEY_ALBUM) ?: "Personnalisation")
+        builder.putLong(MediaMetadata.METADATA_KEY_DURATION, fallbackSource?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: -1L)
         builder.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artwork)
         builder.putBitmap(MediaMetadata.METADATA_KEY_ART, artwork)
         builder.putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, artwork)
