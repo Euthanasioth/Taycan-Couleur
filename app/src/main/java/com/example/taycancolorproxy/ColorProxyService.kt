@@ -286,10 +286,11 @@ class ColorProxyService : MediaBrowserService() {
 
         val callback = object : MediaController.Callback() {
             override fun onMetadataChanged(metadata: MediaMetadata?) {
-                Log.d(tag, "onMetadataChanged: ${metadata?.description?.title}")
-                updateMetadata(metadata)
-                reassert()
-            }
+    Log.d(tag, "onMetadataChanged: ${metadata?.description?.title}")
+    updateMetadata(metadata)
+    scheduleReassertBurst()
+}
+
 
             override fun onPlaybackStateChanged(state: PlaybackState?) {
                 val currentState = state?.state ?: PlaybackState.STATE_PAUSED
@@ -322,6 +323,7 @@ when (currentState) {
             STOP_KEEP_MS
         )
     }
+}
 }
 
 
