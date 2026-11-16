@@ -12,23 +12,15 @@ class NotificationListener : NotificationListenerService() {
         findAndAttachDeezer()
     }
 
-    override fun onActiveSessionsChanged(controllers: List<MediaController>?) {
-        super.onActiveSessionsChanged(controllers)
-        findAndAttachDeezer(controllers)
-    }
-
-    private fun findAndAttachDeezer(existingControllers: List<MediaController>? = null) {
+    private fun findAndAttachDeezer() {
         try {
             val manager = getSystemService(MEDIA_SESSION_SERVICE) as MediaSessionManager
-            // On récupère les sessions actives filtrées par notre composant
-            val controllers = existingControllers ?: manager.getActiveSessions(ComponentName(this, NotificationListener::class.java))
+            val controllers = manager.getActiveSessions(ComponentName(this, NotificationListener::class.java))
             
-            // On cherche spécifiquement Deezer
             val deezerController = controllers.firstOrNull { it.packageName == "deezer.android.app" }
             
             if (deezerController != null) {
                 Logger.log("Deezer trouvé et attaché au proxy de couleur")
-                // On transmet le contrôleur au service pour que les boutons pilotent Deezer
                 ColorProxyService.attachSourceController(deezerController)
             }
         } catch (e: Exception) {
