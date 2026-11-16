@@ -43,7 +43,8 @@ class ColorProxyService : MediaBrowserService() {
         private const val PAUSE_KEEP_MS = 30 * 60 * 1000L
         private const val STOP_KEEP_MS = 60 * 1000L
         private const val PRE_KEEP_MS = 3 * 60 * 1000L
-        private const val CLAIM_MS = 400L
+        private const val HOLD_DELAY_MS = 350L
+        private const val CLAIM_MS = 500L
 
         private var instance: ColorProxyService? = null
         private var pendingController: MediaController? = null
@@ -168,9 +169,9 @@ class ColorProxyService : MediaBrowserService() {
     private fun claim() {
         val st = currentController?.playbackState ?: return
         if (st.state != PlaybackState.STATE_PLAYING) return
-        Logger.log("reprise de la main : chargement")
+        Logger.log("reprise de la main : pause courte")
         claiming = true
-        session.setPlaybackState(buildState(PlaybackState.STATE_BUFFERING, estimatedPosition(st), 0f))
+        session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, estimatedPosition(st), 0f))
         claimHandler.removeCallbacksAndMessages(null)
         claimHandler.postDelayed({
             claiming = false
@@ -180,6 +181,26 @@ class ColorProxyService : MediaBrowserService() {
                 Logger.log("reprise de la main : lecture")
             }
         }, CLAIM_MS)
+    }
+
+    private fun handlePaused(p: Long) {
+        handler.removeCallbacksAndMessages(null)
+        cancelClaim()
+        if (!holdActive) {
+            session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, p, 0f))
+        }
+        handler.postDelayed({
+            val st = currentController?.playbackState
+            if (st?.state == PlaybackState.STATE_PAUSED) startHold()
+        }, HOLD_DELAY_MS)
+        handler.postDelayed({
+            stopHold()
+            silent.stop()
+            val st = currentController?.playbackState
+            session.setPlaybackState(
+                buildState(PlaybackState.STATE_PAUSED, st?.position ?: p, 0f)
+            )
+        }, PAUSE_KEEP_MS)
     }
 
     private fun armSilentSafety() {
@@ -306,17 +327,7 @@ class ColorProxyService : MediaBrowserService() {
                         }
                     }
                     PlaybackState.STATE_PAUSED -> {
-                        handler.removeCallbacksAndMessages(null)
-                        cancelClaim()
-                        startHold()
-                        handler.postDelayed({
-                            stopHold()
-                            silent.stop()
-                            val st = currentController?.playbackState
-                            session.setPlaybackState(
-                                buildState(PlaybackState.STATE_PAUSED, st?.position ?: p)
-                            )
-                        }, PAUSE_KEEP_MS)
+                        handlePaused(p)
                     }
                     PlaybackState.STATE_STOPPED, PlaybackState.STATE_NONE -> {
                         handler.removeCallbacksAndMessages(null)
@@ -326,6 +337,7 @@ class ColorProxyService : MediaBrowserService() {
                         handler.postDelayed({ silent.stop() }, STOP_KEEP_MS)
                     }
                     else -> {
+                        handler.removeCallbacksAndMessages(null)
                         cancelClaim()
                         stopHold()
                         session.setPlaybackState(buildState(s, p))
@@ -341,7 +353,7 @@ class ColorProxyService : MediaBrowserService() {
         val s0 = currentState?.state ?: PlaybackState.STATE_PAUSED
         val p0: Long = currentState?.position ?: 0L
         if (s0 == PlaybackState.STATE_PAUSED) {
-            startHold()
+            handlePaused(p0)
         } else {
             mirror(s0, p0)
         }
