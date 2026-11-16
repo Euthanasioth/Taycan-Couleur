@@ -26,6 +26,7 @@ class ColorProxyService : MediaBrowserService() {
     private var holdActive = false
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private val tickHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val claimHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val silent = SilentPlayer()
 
     private val holdTick = object : Runnable {
@@ -106,6 +107,8 @@ class ColorProxyService : MediaBrowserService() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        Logger.init(this)
+        Logger.log("service créé")
 
         session = MediaSession(this, "TaycanColorProxy")
         session.setFlags(
@@ -133,22 +136,46 @@ class ColorProxyService : MediaBrowserService() {
         armSilentSafety()
     }
 
+    private fun estimatedPosition(st: PlaybackState?): Long {
+        if (st == null) return 0L
+        var p: Long = st.position
+        if (st.state == PlaybackState.STATE_PLAYING) {
+            p += ((android.os.SystemClock.elapsedRealtime() - st.lastPositionUpdateTime) * st.playbackSpeed).toLong()
+        }
+        return p
+    }
+
     private fun startHold() {
+        Logger.log("pause tenue : début")
         holdActive = true
         tickHandler.removeCallbacksAndMessages(null)
         tickHandler.post(holdTick)
     }
 
     private fun stopHold() {
+        if (holdActive) Logger.log("pause tenue : fin")
         holdActive = false
         tickHandler.removeCallbacksAndMessages(null)
+    }
+
+    private fun claim() {
+        val st = currentController?.playbackState ?: return
+        if (st.state != PlaybackState.STATE_PLAYING) return
+        Logger.log("reprise de la main : pause puis lecture")
+        session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, estimatedPosition(st), 0f))
+        claimHandler.removeCallbacksAndMessages(null)
+        claimHandler.postDelayed({
+            val st2 = currentController?.playbackState
+            if (st2 != null && st2.state == PlaybackState.STATE_PLAYING) {
+                session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, estimatedPosition(st2), 1f))
+            }
+        }, 150)
     }
 
     private fun armSilentSafety() {
         handler.postDelayed({
             val st = currentController?.playbackState
-            if (st?.state != PlaybackState.STATE_PLAYING) {
-                stopHold()
+            if (!holdActive && st?.state != PlaybackState.STATE_PLAYING) {
                 silent.stop()
                 session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, st?.position ?: 0L))
             }
@@ -182,11 +209,7 @@ class ColorProxyService : MediaBrowserService() {
         val c = currentController ?: return
         val st = c.playbackState
         val s = st?.state ?: PlaybackState.STATE_PAUSED
-        var p: Long = st?.position ?: 0L
-        if (st != null && s == PlaybackState.STATE_PLAYING) {
-            p += ((android.os.SystemClock.elapsedRealtime() - st.lastPositionUpdateTime) * st.playbackSpeed).toLong()
-        }
-        mirror(s, p)
+        mirror(s, estimatedPosition(st))
         updateMetadata(c.metadata)
     }
 
@@ -214,16 +237,19 @@ class ColorProxyService : MediaBrowserService() {
 
     private fun attach(sourceController: MediaController) {
         if (currentController?.sessionToken == sourceController.sessionToken) return
+        Logger.log("rattaché à Deezer")
         currentCallback?.let { currentController?.unregisterCallback(it) }
         currentController = sourceController
 
         session.setCallback(object : MediaSession.Callback() {
             override fun onPlay() {
+                Logger.log("commande voiture : lecture")
                 silent.start()
                 sourceController.transportControls.play()
             }
             override fun onPause() {
                 val st = sourceController.playbackState?.state
+                Logger.log("commande voiture : pause (Deezer état=$st)")
                 if (st == PlaybackState.STATE_PAUSED) {
                     silent.start()
                     sourceController.transportControls.play()
@@ -232,10 +258,12 @@ class ColorProxyService : MediaBrowserService() {
                 }
             }
             override fun onSkipToNext() {
+                Logger.log("commande voiture : suivant")
                 silent.start()
                 sourceController.transportControls.skipToNext()
             }
             override fun onSkipToPrevious() {
+                Logger.log("commande voiture : précédent")
                 silent.start()
                 sourceController.transportControls.skipToPrevious()
             }
@@ -250,11 +278,11 @@ class ColorProxyService : MediaBrowserService() {
                 updateMetadata(metadata)
             }
 
-                        override fun onPlaybackStateChanged(state: PlaybackState?) {
-                val realState = state?.state ?: PlaybackState.STATE_PAUSED
+            override fun onPlaybackStateChanged(state: PlaybackState?) {
+                val s = state?.state ?: PlaybackState.STATE_PAUSED
                 val p: Long = state?.position ?: 0L
-
-                when (realState) {
+                Logger.log("Deezer : état=$s")
+                when (s) {
                     PlaybackState.STATE_PLAYING -> {
                         handler.removeCallbacksAndMessages(null)
                         stopHold()
@@ -265,21 +293,29 @@ class ColorProxyService : MediaBrowserService() {
                     PlaybackState.STATE_PAUSED -> {
                         handler.removeCallbacksAndMessages(null)
                         claimHandler.removeCallbacksAndMessages(null)
-                        stopHold()
-                        session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, p, 0f))
+                        startHold()
                         handler.postDelayed({
+                            stopHold()
                             silent.stop()
-                            session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, p))
+                            val st = currentController?.playbackState
+                            session.setPlaybackState(
+                                buildState(PlaybackState.STATE_PAUSED, st?.position ?: p)
+                            )
                         }, PAUSE_KEEP_MS)
                     }
-                    else -> {
+                    PlaybackState.STATE_STOPPED, PlaybackState.STATE_NONE -> {
                         handler.removeCallbacksAndMessages(null)
                         stopHold()
-                        session.setPlaybackState(buildState(realState, p))
+                        session.setPlaybackState(buildState(s, p))
                         handler.postDelayed({ silent.stop() }, STOP_KEEP_MS)
+                    }
+                    else -> {
+                        stopHold()
+                        session.setPlaybackState(buildState(s, p))
                     }
                 }
             }
+        }
         sourceController.registerCallback(callback)
         currentCallback = callback
 
@@ -356,6 +392,7 @@ class ColorProxyService : MediaBrowserService() {
         clientUid: Int,
         rootHints: Bundle?
     ): BrowserRoot {
+        Logger.log("onGetRoot depuis $clientPackageName")
         reassert()
         val extras = Bundle()
         extras.putBoolean("android.media.browse.CONTENT_STYLE_SUPPORTED", true)
@@ -419,8 +456,10 @@ class ColorProxyService : MediaBrowserService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        Logger.log("service détruit")
         handler.removeCallbacksAndMessages(null)
         tickHandler.removeCallbacksAndMessages(null)
+        claimHandler.removeCallbacksAndMessages(null)
         holdActive = false
         silent.stop()
         currentCallback?.let { currentController?.unregisterCallback(it) }
