@@ -37,14 +37,6 @@ class ColorProxyService : MediaBrowserService() {
         }
     }
 
-    // RAFALE ANTI-SCINTILLEMENT : Envoie plusieurs updates ultra-rapprochés pour tuer le logo Deezer au vol
-    private fun burstReassertion() {
-        updateMetadata(lastSourceMetadata)
-        handler.postDelayed({ updateMetadata(lastSourceMetadata) }, 50L)
-        handler.postDelayed({ updateMetadata(lastSourceMetadata) }, 150L)
-        handler.postDelayed({ updateMetadata(lastSourceMetadata) }, 300L)
-    }
-
     companion object {
         private var instance: ColorProxyService? = null
         private var pendingController: MediaController? = null
@@ -151,26 +143,23 @@ class ColorProxyService : MediaBrowserService() {
     private fun setupMasterSessionCallbacks(sourceController: MediaController?) {
         session.setCallback(object : MediaSession.Callback() {
             override fun onPlay() {
-                Logger.log("Action Master : Play")
                 silent.start()
                 sourceController?.transportControls?.play()
-                burstReassertion()
+                updateMetadata(lastSourceMetadata)
             }
             override fun onPause() {
-                Logger.log("Action Master : Pause")
                 sourceController?.transportControls?.pause()
-                // RAFALE DIRECTE A LA PAUSE POUR EVITER LE SCINTILLEMENT DEEZER
-                burstReassertion()
+                updateMetadata(lastSourceMetadata)
             }
             override fun onSkipToNext() {
                 silent.start()
                 sourceController?.transportControls?.skipToNext()
-                burstReassertion()
+                updateMetadata(lastSourceMetadata)
             }
             override fun onSkipToPrevious() {
                 silent.start()
                 sourceController?.transportControls?.skipToPrevious()
-                burstReassertion()
+                updateMetadata(lastSourceMetadata)
             }
             override fun onStop() {
                 sourceController?.transportControls?.stop()
@@ -191,17 +180,18 @@ class ColorProxyService : MediaBrowserService() {
         val callback = object : MediaController.Callback() {
             override fun onMetadataChanged(metadata: MediaMetadata?) {
                 if (metadata != null) {
+                    // BLINDAGE RADICAL : On extrait uniquement les titres/artistes textuels, 
+                    // mais on ignore totalement et définitivement l'artwork envoyé par Deezer.
                     lastSourceMetadata = metadata
                 }
-                // RAFALE QUAND DEEZER CHANGE DE CHANSON OU POUSSE SES METADONNEES
-                burstReassertion()
+                updateMetadata(lastSourceMetadata)
             }
 
             override fun onPlaybackStateChanged(state: PlaybackState?) {
                 val s = state?.state ?: PlaybackState.STATE_PLAYING
                 val p: Long = state?.position ?: 0L
                 session.setPlaybackState(buildState(s, p))
-                burstReassertion()
+                updateMetadata(lastSourceMetadata)
 
                 if (s == PlaybackState.STATE_PLAYING) {
                     silent.start()
@@ -256,14 +246,18 @@ class ColorProxyService : MediaBrowserService() {
         val artwork = makeColorArtwork(1000, 1000)
 
         val builder = MediaMetadata.Builder()
+        // On garde les métadonnées textuelles de Deezer (titre, artiste, album) pour que la voiture sache quoi afficher
         builder.putString(MediaMetadata.METADATA_KEY_TITLE, source?.getString(MediaMetadata.METADATA_KEY_TITLE) ?: "Ambiance Taycan")
         builder.putString(MediaMetadata.METADATA_KEY_ARTIST, source?.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: "Contrôle Couleur")
         builder.putString(MediaMetadata.METADATA_KEY_ALBUM, source?.getString(MediaMetadata.METADATA_KEY_ALBUM) ?: "Personnalisation")
         builder.putLong(MediaMetadata.METADATA_KEY_DURATION, source?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: -1L)
+        
+        // ON FORCE NOTRE DÉGRADÉ SUR TOUS LES CHAMPS D'IMAGE POSSIBLES
         builder.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artwork)
         builder.putBitmap(MediaMetadata.METADATA_KEY_ART, artwork)
         builder.putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, artwork)
 
+        // Notre session envoie ce paquet blindé à la voiture, bloquant l'artwork de Deezer
         session.setMetadata(builder.build())
     }
 
