@@ -25,14 +25,16 @@ class ColorProxyService : MediaBrowserService() {
     private var currentController: MediaController? = null
     private var currentCallback: MediaController.Callback? = null
     private var lastReassert = 0L
+    private var cachedKey: String? = null
+    private var cachedBitmap: Bitmap? = null
     private val handler = Handler(Looper.getMainLooper())
+    private val stopHandler = Handler(Looper.getMainLooper())
     private val silent = SilentPlayer()
 
-    // Boucle agressive pour réaffirmer nos métadonnées en continu et empêcher Deezer de s'incruster
     private val antiDeezerRunnable = object : Runnable {
         override fun run() {
             reassertVisuals()
-            handler.postDelayed(this, 1500L) // Toutes les 1.5 secondes
+            handler.postDelayed(this, 1500L)
         }
     }
 
@@ -105,6 +107,8 @@ class ColorProxyService : MediaBrowserService() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        Logger.init(this)
+        Logger.log("service créé")
 
         session = MediaSession(this, "TaycanColorProxy")
         session.setFlags(
@@ -131,12 +135,11 @@ class ColorProxyService : MediaBrowserService() {
         silent.start()
         armSilentSafety()
 
-        // Lancement du marteau-pilon anti-Deezer
         handler.postDelayed(antiDeezerRunnable, 1500L)
     }
 
     private fun armSilentSafety() {
-        handler.postDelayed({
+        stopHandler.postDelayed({
             val st = currentController?.playbackState?.state
             if (st != PlaybackState.STATE_PLAYING) silent.stop()
         }, PRE_KEEP_MS)
@@ -157,12 +160,11 @@ class ColorProxyService : MediaBrowserService() {
         val now = System.currentTimeMillis()
         if (now - lastReassert < 5000) return
         lastReassert = now
-        findDeezerNow()
         reassertVisuals()
     }
 
     private fun reassertVisuals() {
-        findDeezerNow()
+        if (currentController == null) findDeezerNow()
         val c = currentController
         val st = c?.playbackState
         val s = st?.state ?: PlaybackState.STATE_PAUSED
@@ -198,20 +200,27 @@ class ColorProxyService : MediaBrowserService() {
 
     private fun attach(sourceController: MediaController) {
         if (currentController?.sessionToken == sourceController.sessionToken) return
+        Logger.log("rattaché à Deezer")
         currentCallback?.let { currentController?.unregisterCallback(it) }
         currentController = sourceController
 
         session.setCallback(object : MediaSession.Callback() {
             override fun onPlay() {
+                Logger.log("commande voiture : lecture")
                 silent.start()
                 sourceController.transportControls.play()
             }
-            override fun onPause() { sourceController.transportControls.pause() }
+            override fun onPause() {
+                Logger.log("commande voiture : pause")
+                sourceController.transportControls.pause()
+            }
             override fun onSkipToNext() {
+                Logger.log("commande voiture : suivant")
                 silent.start()
                 sourceController.transportControls.skipToNext()
             }
             override fun onSkipToPrevious() {
+                Logger.log("commande voiture : précédent")
                 silent.start()
                 sourceController.transportControls.skipToPrevious()
             }
@@ -229,20 +238,26 @@ class ColorProxyService : MediaBrowserService() {
             override fun onPlaybackStateChanged(state: PlaybackState?) {
                 val s = state?.state ?: PlaybackState.STATE_PAUSED
                 val p: Long = state?.position ?: 0L
+                Logger.log("Deezer : état=$s")
                 session.setPlaybackState(buildState(s, p))
                 updateMetadata(currentController?.metadata)
 
                 when (s) {
                     PlaybackState.STATE_PLAYING -> {
+                        stopHandler.removeCallbacksAndMessages(null)
                         silent.start()
                     }
                     PlaybackState.STATE_PAUSED -> {
-                        handler.postDelayed({ silent.stop() }, PAUSE_KEEP_MS)
+                        stopHandler.removeCallbacksAndMessages(null)
+                        stopHandler.postDelayed({ silent.stop() }, PAUSE_KEEP_MS)
                     }
                     PlaybackState.STATE_STOPPED, PlaybackState.STATE_NONE -> {
-                        handler.postDelayed({ silent.stop() }, STOP_KEEP_MS)
+                        stopHandler.removeCallbacksAndMessages(null)
+                        stopHandler.postDelayed({ silent.stop() }, STOP_KEEP_MS)
                     }
-                    else -> { }
+                    else -> {
+                        stopHandler.removeCallbacksAndMessages(null)
+                    }
                 }
             }
         }
@@ -296,7 +311,13 @@ class ColorProxyService : MediaBrowserService() {
         val prefs = getSharedPreferences("taycan_couleur", MODE_PRIVATE)
         val c1 = prefs.getString("color1", "#FF3DBB")!!
         val c2 = prefs.getString("color2", "#8A2BE2")!!
-        return makeGradientBitmap(width, height, c1, c2)
+        val key = "$c1|$c2|$width|$height"
+        val cached = cachedBitmap
+        if (cached != null && cachedKey == key) return cached
+        val b = makeGradientBitmap(width, height, c1, c2)
+        cachedBitmap = b
+        cachedKey = key
+        return b
     }
 
     private fun makeGradientBitmap(width: Int, height: Int, c1: String, c2: String): Bitmap {
@@ -320,6 +341,7 @@ class ColorProxyService : MediaBrowserService() {
         clientUid: Int,
         rootHints: Bundle?
     ): BrowserRoot {
+        Logger.log("onGetRoot depuis $clientPackageName")
         reassert()
         val extras = Bundle()
         extras.putBoolean("android.media.browse.CONTENT_STYLE_SUPPORTED", true)
@@ -383,10 +405,13 @@ class ColorProxyService : MediaBrowserService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        Logger.log("service détruit")
         handler.removeCallbacksAndMessages(null)
+        stopHandler.removeCallbacksAndMessages(null)
         silent.stop()
         currentCallback?.let { currentController?.unregisterCallback(it) }
         session.release()
+        cachedBitmap = null
         instance = null
     }
 }
