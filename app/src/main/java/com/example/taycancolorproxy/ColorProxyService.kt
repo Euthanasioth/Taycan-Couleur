@@ -288,25 +288,31 @@ class ColorProxyService : MediaBrowserService() {
     scheduleReassertBurst()
 
     when (currentState) {
-                    PlaybackState.STATE_PLAYING -> {
-                        mainHandler.removeCallbacks(stopSilentRunnable)
-                        mainHandler.removeCallbacks(silentSafetyRunnable)
-                        silent.start()
-                    }
-
-                    PlaybackState.STATE_PAUSED -> {
-                        mainHandler.removeCallbacks(stopSilentRunnable)
-                        mainHandler.postDelayed(stopSilentRunnable, PAUSE_KEEP_MS)
-                    }
-
-                    PlaybackState.STATE_STOPPED,
-                    PlaybackState.STATE_NONE -> {
-                        mainHandler.removeCallbacks(stopSilentRunnable)
-                        mainHandler.postDelayed(stopSilentRunnable, STOP_KEEP_MS)
-                    }
-                }
-            }
+        PlaybackState.STATE_PLAYING -> {
+            mainHandler.removeCallbacks(stopSilentRunnable)
+            mainHandler.removeCallbacks(silentSafetyRunnable)
+            silent.start()
         }
+
+        PlaybackState.STATE_PAUSED -> {
+            mainHandler.removeCallbacks(stopSilentRunnable)
+            mainHandler.postDelayed(
+                stopSilentRunnable,
+                PAUSE_KEEP_MS
+            )
+        }
+
+        PlaybackState.STATE_STOPPED,
+        PlaybackState.STATE_NONE -> {
+            mainHandler.removeCallbacks(stopSilentRunnable)
+            mainHandler.postDelayed(
+                stopSilentRunnable,
+                STOP_KEEP_MS
+            )
+        }
+    }
+}
+
 
         sourceController.registerCallback(callback)
         currentControllerCallback = callback
@@ -330,6 +336,8 @@ class ColorProxyService : MediaBrowserService() {
             .apply()
 
         updateMetadata(lastSourceMetadata)
+scheduleReassertBurst()
+
     }
 
     private fun selectColor(mediaId: String) {
