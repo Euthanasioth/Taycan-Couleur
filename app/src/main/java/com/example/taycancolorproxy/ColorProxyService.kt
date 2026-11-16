@@ -103,7 +103,7 @@ class ColorProxyService : MediaBrowserService() {
         super.onCreate()
         instance = this
         Logger.init(this)
-        Logger.log("Service prioritaire créé")
+        Logger.log("Service créé")
 
         session = MediaSession(this, "TaycanColorProxy")
         session.setFlags(
@@ -145,32 +145,24 @@ class ColorProxyService : MediaBrowserService() {
             override fun onPlay() {
                 silent.start()
                 sourceController?.transportControls?.play()
-                session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, 0L))
                 updateMetadata(lastSourceMetadata)
             }
             override fun onPause() {
-                // On coupe la musique de Deezer en sous-marin
                 sourceController?.transportControls?.pause()
-                
-                // LE MENSONGE VISUEL : On maintient l'état PLAYING pour la voiture
-                silent.start()
-                session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, 0L))
+                // On s'assure juste de ré-affirmer notre dégradé immédiatement à la pause
                 updateMetadata(lastSourceMetadata)
             }
             override fun onSkipToNext() {
                 silent.start()
                 sourceController?.transportControls?.skipToNext()
-                session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, 0L))
             }
             override fun onSkipToPrevious() {
                 silent.start()
                 sourceController?.transportControls?.skipToPrevious()
-                session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, 0L))
             }
             override fun onStop() {
                 sourceController?.transportControls?.stop()
                 silent.stop()
-                session.setPlaybackState(buildState(PlaybackState.STATE_STOPPED, 0L))
             }
             override fun onPlayFromMediaId(mediaId: String, extras: Bundle?) {
                 selectColor(mediaId)
@@ -179,7 +171,7 @@ class ColorProxyService : MediaBrowserService() {
     }
 
     private fun attachToDeezer(sourceController: MediaController) {
-        Logger.log("Attaché à Deezer avec succès en arrière-plan")
+        Logger.log("Attaché à Deezer")
         currentCallback?.let { currentController?.unregisterCallback(it) }
         currentController = sourceController
 
@@ -197,17 +189,13 @@ class ColorProxyService : MediaBrowserService() {
                 val s = state?.state ?: PlaybackState.STATE_PLAYING
                 val p: Long = state?.position ?: 0L
                 
-                // On neutralise les états de pause/arrêt de Deezer pour la voiture
-                val visualState = if (s == PlaybackState.STATE_PAUSED || s == PlaybackState.STATE_STOPPED) {
-                    PlaybackState.STATE_PLAYING
-                } else {
-                    s
-                }
-
-                session.setPlaybackState(buildState(visualState, p))
+                // On transmet l'état réel (Playing, Paused, etc.) pour que la musique puisse repartir normalement
+                session.setPlaybackState(buildState(s, p))
                 updateMetadata(lastSourceMetadata)
 
-                silent.start()
+                if (s == PlaybackState.STATE_PLAYING) {
+                    silent.start()
+                }
             }
         }
         sourceController.registerCallback(callback)
