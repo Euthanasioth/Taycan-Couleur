@@ -23,27 +23,11 @@ class ColorProxyService : MediaBrowserService() {
     private var currentController: MediaController? = null
     private var currentCallback: MediaController.Callback? = null
     private var lastReassert = 0L
-    private var holdActive = false
-    private var claiming = false
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
-    private val tickHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private val claimHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val silent = SilentPlayer()
 
-    private val holdTick = object : Runnable {
-        override fun run() {
-            if (!holdActive) return
-            val pos: Long = currentController?.playbackState?.position ?: 0L
-            session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, pos, 0f))
-            tickHandler.postDelayed(this, 500)
-        }
-    }
-
     companion object {
-        private const val PAUSE_KEEP_MS = 30 * 60 * 1000L
         private const val STOP_KEEP_MS = 60 * 1000L
-        private const val PRE_KEEP_MS = 3 * 60 * 1000L
-        private const val CLAIM_MS = 500L
 
         private var instance: ColorProxyService? = null
         private var pendingController: MediaController? = null
@@ -110,7 +94,7 @@ class ColorProxyService : MediaBrowserService() {
         super.onCreate()
         instance = this
         Logger.init(this)
-        Logger.log("service créé")
+        Logger.log("service créé (mode propre 4 boutons)")
 
         session = MediaSession(this, "TaycanColorProxy")
         session.setFlags(
@@ -135,7 +119,6 @@ class ColorProxyService : MediaBrowserService() {
         findDeezerNow()
 
         silent.start()
-        armSilentSafety()
     }
 
     private fun estimatedPosition(st: PlaybackState?): Long {
@@ -145,74 +128,6 @@ class ColorProxyService : MediaBrowserService() {
             p += ((android.os.SystemClock.elapsedRealtime() - st.lastPositionUpdateTime) * st.playbackSpeed).toLong()
         }
         return p
-    }
-
-    private fun startHold() {
-        if (!holdActive) Logger.log("pause tenue : début")
-        holdActive = true
-        tickHandler.removeCallbacksAndMessages(null)
-        tickHandler.post(holdTick)
-    }
-
-    private fun stopHold() {
-        if (holdActive) Logger.log("pause tenue : fin")
-        holdActive = false
-        tickHandler.removeCallbacksAndMessages(null)
-    }
-
-    private fun cancelClaim() {
-        claiming = false
-        claimHandler.removeCallbacksAndMessages(null)
-    }
-
-    private fun claim() {
-        val st = currentController?.playbackState ?: return
-        if (st.state != PlaybackState.STATE_PLAYING) return
-        Logger.log("reprise de la main : pause courte")
-        claiming = true
-        session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, estimatedPosition(st), 0f))
-        claimHandler.removeCallbacksAndMessages(null)
-        claimHandler.postDelayed({
-            claiming = false
-            val st2 = currentController?.playbackState
-            if (st2 != null && st2.state == PlaybackState.STATE_PLAYING) {
-                session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, estimatedPosition(st2), 1f))
-                Logger.log("reprise de la main : lecture")
-            }
-        }, CLAIM_MS)
-    }
-
-    private fun handlePaused(p: Long) {
-        handler.removeCallbacksAndMessages(null)
-        cancelClaim()
-        startHold()
-        
-        handler.postDelayed({
-            stopHold()
-            silent.stop()
-            val st = currentController?.playbackState
-            session.setPlaybackState(
-                buildState(PlaybackState.STATE_PAUSED, st?.position ?: p, 0f)
-            )
-        }, PAUSE_KEEP_MS)
-    }
-
-    private fun armSilentSafety() {
-        handler.postDelayed({
-            val st = currentController?.playbackState
-            if (!holdActive && st?.state != PlaybackState.STATE_PLAYING) {
-                silent.stop()
-                session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, st?.position ?: 0L))
-            }
-        }, PRE_KEEP_MS)
-    }
-
-    private fun mirror(s: Int, p: Long) {
-        if (s == PlaybackState.STATE_PAUSED && holdActive) {
-            session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, p, 0f))
-        } else {
-            session.setPlaybackState(buildState(s, p))
-        }
     }
 
     private fun findDeezerNow() {
@@ -231,11 +146,10 @@ class ColorProxyService : MediaBrowserService() {
         if (now - lastReassert < 5000) return
         lastReassert = now
         findDeezerNow()
-        if (claiming) return
         val c = currentController ?: return
         val st = c.playbackState
         val s = st?.state ?: PlaybackState.STATE_PAUSED
-        mirror(s, estimatedPosition(st))
+        session.setPlaybackState(buildState(s, estimatedPosition(st)))
         updateMetadata(c.metadata)
     }
 
@@ -267,41 +181,28 @@ class ColorProxyService : MediaBrowserService() {
         currentCallback?.let { currentController?.unregisterCallback(it) }
         currentController = sourceController
 
+        // Callbacks propres pour les 4 boutons de transport
         session.setCallback(object : MediaSession.Callback() {
             override fun onPlay() {
-                Logger.log("commande voiture : lecture demandée")
-                stopHold()
+                Logger.log("bouton : PLAY")
                 silent.start()
                 sourceController.transportControls.play()
-                val st = sourceController.playbackState
-                session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, estimatedPosition(st), 1f))
             }
             override fun onPause() {
-                Logger.log("commande voiture : pause demandée")
-                val deezerState = sourceController.playbackState?.state
-                if (holdActive && deezerState == PlaybackState.STATE_PAUSED) {
-                    onPlay()
-                } else {
-                    silent.start()
-                    sourceController.transportControls.pause()
-                }
+                Logger.log("bouton : PAUSE")
+                sourceController.transportControls.pause()
             }
             override fun onSkipToNext() {
-                Logger.log("commande voiture : suivant")
-                stopHold()
+                Logger.log("bouton : SUIVANT")
                 silent.start()
                 sourceController.transportControls.skipToNext()
             }
             override fun onSkipToPrevious() {
-                Logger.log("commande voiture : précédent")
-                stopHold()
+                Logger.log("bouton : PRÉCÉDENT")
                 silent.start()
                 sourceController.transportControls.skipToPrevious()
             }
-            override fun onFastForward() { onPlay() }
-            override fun onRewind() { onPlay() }
             override fun onStop() { 
-                stopHold()
                 sourceController.transportControls.stop() 
             }
             override fun onPlayFromMediaId(mediaId: String, extras: Bundle?) {
@@ -311,62 +212,37 @@ class ColorProxyService : MediaBrowserService() {
 
         val callback = object : MediaController.Callback() {
             override fun onMetadataChanged(metadata: MediaMetadata?) {
+                // Dès que Deezer change de morceau, on force immédiatement notre couleur par-dessus
                 updateMetadata(metadata)
             }
 
             override fun onPlaybackStateChanged(state: PlaybackState?) {
                 val s = state?.state ?: PlaybackState.STATE_PAUSED
                 val p: Long = state?.position ?: 0L
-                Logger.log("Deezer : état=$s")
-                when (s) {
-                    PlaybackState.STATE_PLAYING -> {
-                        // VRAI RECOURS : Seul un vrai STATE_PLAYING ou un ordre explicite arrête le hold
-                        handler.removeCallbacksAndMessages(null)
-                        val wasHold = holdActive
-                        stopHold()
-                        silent.start()
-                        if (wasHold) {
-                            claim()
-                        } else if (!claiming) {
-                            session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, p, 1f))
-                        }
-                    }
-                    PlaybackState.STATE_PAUSED -> {
-                        handlePaused(p)
-                    }
-                    PlaybackState.STATE_STOPPED -> {
-                        // On ne stoppe le hold que si c'est un vrai STOPPED confirmé, pas des états transitoires
-                        handler.removeCallbacksAndMessages(null)
-                        cancelClaim()
-                        stopHold()
-                        session.setPlaybackState(buildState(s, p))
-                        handler.postDelayed({ silent.stop() }, STOP_KEEP_MS)
-                    }
-                    else -> {
-                        // Pour tous les autres états bizarres/transitoires (BUFFERING, NONE, etc.), 
-                        // si on était en pause tenue, ON NE FAIT RIEN pour ne pas casser l'illusion !
-                        if (!holdActive) {
-                            session.setPlaybackState(buildState(s, p))
-                        }
-                    }
+                Logger.log("Deezer état=$s -> Répercuté sur le proxy")
+
+                // On répercute fidèlement l'état (Play, Pause, Stop...) mais notre session 
+                // garde la main sur les métadonnées et le faux son, donc la couleur reste !
+                session.setPlaybackState(buildState(s, p))
+
+                if (s == PlaybackState.STATE_PLAYING) {
+                    silent.start()
+                } else if (s == PlaybackState.STATE_STOPPED || s == PlaybackState.STATE_NONE) {
+                    handler.postDelayed({ silent.stop() }, STOP_KEEP_MS)
                 }
             }
         }
         sourceController.registerCallback(callback)
         currentCallback = callback
 
+        // Initialisation initiale
         updateMetadata(sourceController.metadata)
         val currentState = sourceController.playbackState
         val s0 = currentState?.state ?: PlaybackState.STATE_PAUSED
         val p0: Long = currentState?.position ?: 0L
-        if (s0 == PlaybackState.STATE_PAUSED) {
-            handlePaused(p0)
-        } else {
-            mirror(s0, p0)
-        }
+        session.setPlaybackState(buildState(s0, p0))
 
         silent.start()
-        armSilentSafety()
     }
 
     private fun buildState(state: Int, position: Long, speed: Float = 1f): PlaybackState {
@@ -386,6 +262,7 @@ class ColorProxyService : MediaBrowserService() {
         if (source == null) return
         lastSourceMetadata = source
 
+        // On forge les métadonnées avec les infos de Deezer (titre/artiste) mais en forçant NOTRE artwork coloré !
         val artwork = makeColorArtwork(1000, 1000)
 
         val builder = MediaMetadata.Builder()
@@ -494,10 +371,6 @@ class ColorProxyService : MediaBrowserService() {
         super.onDestroy()
         Logger.log("service détruit")
         handler.removeCallbacksAndMessages(null)
-        tickHandler.removeCallbacksAndMessages(null)
-        claimHandler.removeCallbacksAndMessages(null)
-        holdActive = false
-        claiming = false
         silent.stop()
         currentCallback?.let { currentController?.unregisterCallback(it) }
         session.release()
