@@ -279,40 +279,33 @@ class ColorProxyService : MediaBrowserService() {
             }
 
             override fun onPlaybackStateChanged(state: PlaybackState?) {
-    val currentState = state?.state ?: PlaybackState.STATE_PAUSED
-    val position = state?.position ?: 0L
+                val currentState = state?.state ?: PlaybackState.STATE_PAUSED
+                val position = state?.position ?: 0L
 
-    session.setPlaybackState(buildState(currentState, position))
+                session.setPlaybackState(buildState(currentState, position))
+                updateMetadata(lastSourceMetadata)
+                scheduleReassertBurst()
 
-    updateMetadata(lastSourceMetadata)
-    scheduleReassertBurst()
+                when (currentState) {
+                    PlaybackState.STATE_PLAYING -> {
+                        mainHandler.removeCallbacks(stopSilentRunnable)
+                        mainHandler.removeCallbacks(silentSafetyRunnable)
+                        silent.start()
+                    }
 
-    when (currentState) {
-        PlaybackState.STATE_PLAYING -> {
-            mainHandler.removeCallbacks(stopSilentRunnable)
-            mainHandler.removeCallbacks(silentSafetyRunnable)
-            silent.start()
+                    PlaybackState.STATE_PAUSED -> {
+                        mainHandler.removeCallbacks(stopSilentRunnable)
+                        mainHandler.postDelayed(stopSilentRunnable, PAUSE_KEEP_MS)
+                    }
+
+                    PlaybackState.STATE_STOPPED,
+                    PlaybackState.STATE_NONE -> {
+                        mainHandler.removeCallbacks(stopSilentRunnable)
+                        mainHandler.postDelayed(stopSilentRunnable, STOP_KEEP_MS)
+                    }
+                }
+            }
         }
-
-        PlaybackState.STATE_PAUSED -> {
-            mainHandler.removeCallbacks(stopSilentRunnable)
-            mainHandler.postDelayed(
-                stopSilentRunnable,
-                PAUSE_KEEP_MS
-            )
-        }
-
-        PlaybackState.STATE_STOPPED,
-        PlaybackState.STATE_NONE -> {
-            mainHandler.removeCallbacks(stopSilentRunnable)
-            mainHandler.postDelayed(
-                stopSilentRunnable,
-                STOP_KEEP_MS
-            )
-        }
-    }
-}
-
 
         sourceController.registerCallback(callback)
         currentControllerCallback = callback
@@ -336,8 +329,7 @@ class ColorProxyService : MediaBrowserService() {
             .apply()
 
         updateMetadata(lastSourceMetadata)
-scheduleReassertBurst()
-
+        scheduleReassertBurst()
     }
 
     private fun selectColor(mediaId: String) {
