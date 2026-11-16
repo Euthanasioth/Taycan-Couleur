@@ -24,6 +24,7 @@ class ColorProxyService : MediaBrowserService() {
     private var currentCallback: MediaController.Callback? = null
     private var lastReassert = 0L
     private var holdActive = false
+    private var claiming = false
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private val tickHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val claimHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -42,6 +43,7 @@ class ColorProxyService : MediaBrowserService() {
         private const val PAUSE_KEEP_MS = 30 * 60 * 1000L
         private const val STOP_KEEP_MS = 60 * 1000L
         private const val PRE_KEEP_MS = 3 * 60 * 1000L
+        private const val CLAIM_MS = 400L
 
         private var instance: ColorProxyService? = null
         private var pendingController: MediaController? = null
@@ -146,7 +148,7 @@ class ColorProxyService : MediaBrowserService() {
     }
 
     private fun startHold() {
-        Logger.log("pause tenue : début")
+        if (!holdActive) Logger.log("pause tenue : début")
         holdActive = true
         tickHandler.removeCallbacksAndMessages(null)
         tickHandler.post(holdTick)
@@ -158,18 +160,26 @@ class ColorProxyService : MediaBrowserService() {
         tickHandler.removeCallbacksAndMessages(null)
     }
 
+    private fun cancelClaim() {
+        claiming = false
+        claimHandler.removeCallbacksAndMessages(null)
+    }
+
     private fun claim() {
         val st = currentController?.playbackState ?: return
         if (st.state != PlaybackState.STATE_PLAYING) return
-        Logger.log("reprise de la main : pause puis lecture")
-        session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, estimatedPosition(st), 0f))
+        Logger.log("reprise de la main : chargement")
+        claiming = true
+        session.setPlaybackState(buildState(PlaybackState.STATE_BUFFERING, estimatedPosition(st), 0f))
         claimHandler.removeCallbacksAndMessages(null)
         claimHandler.postDelayed({
+            claiming = false
             val st2 = currentController?.playbackState
             if (st2 != null && st2.state == PlaybackState.STATE_PLAYING) {
                 session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, estimatedPosition(st2), 1f))
+                Logger.log("reprise de la main : lecture")
             }
-        }, 150)
+        }, CLAIM_MS)
     }
 
     private fun armSilentSafety() {
@@ -206,6 +216,7 @@ class ColorProxyService : MediaBrowserService() {
         if (now - lastReassert < 5000) return
         lastReassert = now
         findDeezerNow()
+        if (claiming) return
         val c = currentController ?: return
         val st = c.playbackState
         val s = st?.state ?: PlaybackState.STATE_PAUSED
@@ -285,14 +296,18 @@ class ColorProxyService : MediaBrowserService() {
                 when (s) {
                     PlaybackState.STATE_PLAYING -> {
                         handler.removeCallbacksAndMessages(null)
+                        val wasHold = holdActive
                         stopHold()
                         silent.start()
-                        claim()
-                        handler.postDelayed({ claim() }, 1500)
+                        if (wasHold) {
+                            claim()
+                        } else if (!claiming) {
+                            session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, p, 1f))
+                        }
                     }
                     PlaybackState.STATE_PAUSED -> {
                         handler.removeCallbacksAndMessages(null)
-                        claimHandler.removeCallbacksAndMessages(null)
+                        cancelClaim()
                         startHold()
                         handler.postDelayed({
                             stopHold()
@@ -305,11 +320,13 @@ class ColorProxyService : MediaBrowserService() {
                     }
                     PlaybackState.STATE_STOPPED, PlaybackState.STATE_NONE -> {
                         handler.removeCallbacksAndMessages(null)
+                        cancelClaim()
                         stopHold()
                         session.setPlaybackState(buildState(s, p))
                         handler.postDelayed({ silent.stop() }, STOP_KEEP_MS)
                     }
                     else -> {
+                        cancelClaim()
                         stopHold()
                         session.setPlaybackState(buildState(s, p))
                     }
@@ -461,6 +478,7 @@ class ColorProxyService : MediaBrowserService() {
         tickHandler.removeCallbacksAndMessages(null)
         claimHandler.removeCallbacksAndMessages(null)
         holdActive = false
+        claiming = false
         silent.stop()
         currentCallback?.let { currentController?.unregisterCallback(it) }
         session.release()
