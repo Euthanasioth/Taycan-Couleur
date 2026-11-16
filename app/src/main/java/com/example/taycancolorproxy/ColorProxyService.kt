@@ -34,12 +34,12 @@ class ColorProxyService : MediaBrowserService() {
     private val antiDeezerRunnable = object : Runnable {
         override fun run() {
             reassertVisuals()
-            handler.postDelayed(this, 1500L)
+            handler.postDelayed(this, 1000L) // Raccourci à 1 seconde pour être intraitable
         }
     }
 
     companion object {
-        private const val PAUSE_KEEP_MS = 5 * 60 * 1000L
+        private const val PAUSE_KEEP_MS = 10 * 60 * 1000L // Étendu à 10 min pour garder le contrôle en pause
         private const val STOP_KEEP_MS = 60 * 1000L
         private const val PRE_KEEP_MS = 3 * 60 * 1000L
 
@@ -135,7 +135,7 @@ class ColorProxyService : MediaBrowserService() {
         silent.start()
         armSilentSafety()
 
-        handler.postDelayed(antiDeezerRunnable, 1500L)
+        handler.postDelayed(antiDeezerRunnable, 1000L)
     }
 
     private fun armSilentSafety() {
@@ -158,7 +158,7 @@ class ColorProxyService : MediaBrowserService() {
 
     private fun reassert() {
         val now = System.currentTimeMillis()
-        if (now - lastReassert < 5000) return
+        if (now - lastReassert < 3000) return
         lastReassert = now
         reassertVisuals()
     }
@@ -172,6 +172,8 @@ class ColorProxyService : MediaBrowserService() {
         if (st != null && s == PlaybackState.STATE_PLAYING) {
             p += ((android.os.SystemClock.elapsedRealtime() - st.lastPositionUpdateTime) * st.playbackSpeed).toLong()
         }
+        
+        // FORCAGE MAITRE : On maintient l'état et nos métadonnées quoi qu'il arrive
         session.setPlaybackState(buildState(s, p))
         updateMetadata(c?.metadata ?: lastSourceMetadata)
     }
@@ -213,6 +215,9 @@ class ColorProxyService : MediaBrowserService() {
             override fun onPause() {
                 Logger.log("commande voiture : pause")
                 sourceController.transportControls.pause()
+                // CONTRE-ATTAQUE DIRECTE A LA PAUSE : 
+                // On réapplique immédiatement notre dégradé pour tuer le retour de Deezer
+                updateMetadata(currentController?.metadata)
             }
             override fun onSkipToNext() {
                 Logger.log("commande voiture : suivant")
@@ -232,13 +237,16 @@ class ColorProxyService : MediaBrowserService() {
 
         val callback = object : MediaController.Callback() {
             override fun onMetadataChanged(metadata: MediaMetadata?) {
-                updateMetadata(metadata)
+                // IGNORER LES METADONNÉES DE DEEZER QUAND ILS ESSAIENT DE PASSER EN FORCE
+                // On garde la main sur nos propres métadonnées colorées
+                updateMetadata(currentController?.metadata)
             }
 
             override fun onPlaybackStateChanged(state: PlaybackState?) {
                 val s = state?.state ?: PlaybackState.STATE_PAUSED
                 val p: Long = state?.position ?: 0L
                 Logger.log("Deezer : état=$s")
+                
                 session.setPlaybackState(buildState(s, p))
                 updateMetadata(currentController?.metadata)
 
@@ -249,6 +257,9 @@ class ColorProxyService : MediaBrowserService() {
                     }
                     PlaybackState.STATE_PAUSED -> {
                         stopHandler.removeCallbacksAndMessages(null)
+                        // On force un update immédiat puis un second après 200ms pour écraser le rebond Deezer
+                        updateMetadata(currentController?.metadata)
+                        handler.postDelayed({ updateMetadata(currentController?.metadata) }, 200L)
                         stopHandler.postDelayed({ silent.stop() }, PAUSE_KEEP_MS)
                     }
                     PlaybackState.STATE_STOPPED, PlaybackState.STATE_NONE -> {
@@ -344,7 +355,7 @@ class ColorProxyService : MediaBrowserService() {
         Logger.log("onGetRoot depuis $clientPackageName")
         reassert()
         val extras = Bundle()
-        extras.putBoolean("android.media.browse.CONTENT_STYLE_SUPPORTED", true)
+        extras.putBoolean("android.media.browse.CONTENT_STYLE_SUPPORT`, true)
         extras.putInt("android.media.browse.CONTENT_STYLE_BROWSABLE_HINT", 2)
         extras.putInt("android.media.browse.CONTENT_STYLE_PLAYABLE_HINT", 2)
         return BrowserRoot("root", extras)
