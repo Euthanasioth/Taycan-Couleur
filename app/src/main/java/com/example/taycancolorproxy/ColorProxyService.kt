@@ -27,28 +27,23 @@ class ColorProxyService : MediaBrowserService() {
     private val handler = Handler(Looper.getMainLooper())
     private val silent = SilentPlayer()
 
-    // Surveillance active et permanente pour attraper Deezer dès qu'il pointe le bout de son nez
     private val watchDogRunnable = object : Runnable {
         override fun run() {
             if (currentController == null) {
                 findAndAttachDeezer()
             }
-            // On réaffirme en permanence notre propre session comme reine de l'affichage
             updateMetadata(lastSourceMetadata)
             handler.postDelayed(this, 2000L)
         }
     }
 
     companion object {
-        private const val PAUSE_KEEP_MS = 10 * 60 * 1000L
-        private const val STOP_KEEP_MS = 60 * 1000L
-
         private var instance: ColorProxyService? = null
         private var pendingController: MediaController? = null
 
         fun attachSourceController(sourceController: MediaController) {
             val s = instance
-            if (s != null) s.attach(sourceController) else pendingController = sourceController
+            if (s != null) s.attachToDeezer(sourceController) else pendingController = sourceController
         }
 
         private fun hsv(h: Float, s: Float, v: Float): String {
@@ -110,7 +105,6 @@ class ColorProxyService : MediaBrowserService() {
         Logger.init(this)
         Logger.log("Service prioritaire créé")
 
-        // 1. Notre session se déclare active EN PREMIER et s'impose à Android Auto
         session = MediaSession(this, "TaycanColorProxy")
         session.setFlags(
             MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or
@@ -119,17 +113,17 @@ class ColorProxyService : MediaBrowserService() {
         sessionToken = session.sessionToken
         session.isActive = true
 
-        // 2. On configure les commandes de base pour piloter le vide ou un éventuel lecteur en attente
         setupMasterSessionCallbacks(null)
         session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, 0))
 
-        // 3. On démarre le lecteur silencieux pour verrouiller la session active
         silent.start()
 
-        // 4. On cherche si Deezer est déjà là, sinon le watchdog s'en chargera
+        pendingController?.let {
+            attachToDeezer(it)
+            pendingController = null
+        }
         findAndAttachDeezer()
 
-        // 5. Lancement de la surveillance permanente
         handler.post(watchDogRunnable)
     }
 
@@ -156,7 +150,6 @@ class ColorProxyService : MediaBrowserService() {
             override fun onPause() {
                 Logger.log("Action Master : Pause")
                 sourceController?.transportControls?.pause()
-                // On force notre dégradé instantanément pour contrer One UI à la pause
                 updateMetadata(lastSourceMetadata)
             }
             override fun onSkipToNext() {
@@ -181,12 +174,10 @@ class ColorProxyService : MediaBrowserService() {
         currentCallback?.let { currentController?.unregisterCallback(it) }
         currentController = sourceController
 
-        // On met à jour les commandes pour qu'elles pilotent bien ce contrôleur Deezer
         setupMasterSessionCallbacks(sourceController)
 
         val callback = object : MediaController.Callback() {
             override fun onMetadataChanged(metadata: MediaMetadata?) {
-                // On récupère les infos textuelles (titre/artiste) si dispo, mais on garde notre artwork
                 if (metadata != null) {
                     lastSourceMetadata = metadata
                 }
@@ -260,7 +251,6 @@ class ColorProxyService : MediaBrowserService() {
         builder.putBitmap(MediaMetadata.METADATA_KEY_ART, artwork)
         builder.putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, artwork)
 
-        // C'est notre session qui pilote l'affichage principal
         session.setMetadata(builder.build())
     }
 
@@ -291,7 +281,6 @@ class ColorProxyService : MediaBrowserService() {
     }
 
     override fun onLoadChildren(parentId: String, result: Result<MutableList<MediaBrowser.MediaItem>>) {
-        // (Génération de tes listes de couleurs - identique à ton code précédent)
         val items = mutableListOf<MediaBrowser.MediaItem>()
         if (parentId == "root") {
             val sample = families[0].tones[3]
