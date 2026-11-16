@@ -251,27 +251,26 @@ class ColorProxyService : MediaBrowserService() {
     }
 
     private fun reassert() {
-        val now = SystemClock.elapsedRealtime()
+    val now = SystemClock.elapsedRealtime()
 
-        // Limite la fréquence des réaffirmations.
-        if (now - lastReassertAt < 500L) return
-        lastReassertAt = now
+    if (now - lastReassertAt < 500L) return
+    lastReassertAt = now
 
-        val controller = currentController ?: return
-        val sourceState = controller.playbackState
-        val state = sourceState?.state ?: PlaybackState.STATE_PAUSED
-        var position = sourceState?.position ?: 0L
+    val controller = currentController ?: return
+    val sourceState = controller.playbackState
+    val state = sourceState?.state ?: PlaybackState.STATE_PAUSED
+    var position = sourceState?.position ?: 0L
 
-        if (sourceState != null && state == PlaybackState.STATE_PLAYING) {
-            val elapsed =
-                SystemClock.elapsedRealtime() - sourceState.lastPositionUpdateTime
-            position += (elapsed * sourceState.playbackSpeed).toLong()
-        }
+    if (sourceState != null && state == PlaybackState.STATE_PLAYING) {
+        val elapsed =
+            SystemClock.elapsedRealtime() - sourceState.lastPositionUpdateTime
+        position += (elapsed * sourceState.playbackSpeed).toLong()
+    }
 
-        session.setPlaybackState(buildState(currentState, position))
-
-updateMetadata(lastSourceMetadata)
+    session.setPlaybackState(buildState(state, position))
+    updateMetadata(controller.metadata)
 }
+
 
 when (currentState) {
     PlaybackState.STATE_PLAYING -> {
