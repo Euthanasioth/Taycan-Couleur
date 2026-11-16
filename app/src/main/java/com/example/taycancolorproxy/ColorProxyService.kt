@@ -126,8 +126,8 @@ class ColorProxyService : MediaBrowserService() {
                 }
             })
             isActive = true
-            sessionToken = sessionToken
         }
+        sessionToken = session.sessionToken
 
         updatePlaybackState(PlaybackState.STATE_PAUSED)
         updateMetadata()
