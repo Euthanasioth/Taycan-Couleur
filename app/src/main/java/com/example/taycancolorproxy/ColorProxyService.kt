@@ -19,17 +19,10 @@ class Family(val name: String, val tones: List<Tone>)
 class ColorProxyService : MediaBrowserService() {
 
     private lateinit var session: MediaSession
-    private var currentController: MediaController? = null
     private val silent = SilentPlayer()
 
     companion object {
         private var instance: ColorProxyService? = null
-        private var pendingController: MediaController? = null
-
-        fun attachSourceController(sourceController: MediaController) {
-            val s = instance
-            if (s != null) s.attach(sourceController) else pendingController = sourceController
-        }
 
         private fun hsv(h: Float, s: Float, v: Float): String {
             val hue = ((h % 360f) + 360f) % 360f
@@ -88,7 +81,7 @@ class ColorProxyService : MediaBrowserService() {
         super.onCreate()
         instance = this
         Logger.init(this)
-        Logger.log("service créé (télécommande aveugle anti-jaquette)")
+        Logger.log("service créé (indépendant + télécommande aveugle Deezer)")
 
         session = MediaSession(this, "TaycanColorProxy").apply {
             setFlags(
@@ -97,32 +90,39 @@ class ColorProxyService : MediaBrowserService() {
             )
             setCallback(object : MediaSession.Callback() {
                 override fun onPlay() {
-                    Logger.log("Télécommande -> PLAY Deezer")
+                    Logger.log("Télécommande -> Ordre PLAY envoyé à Deezer")
                     silent.start()
-                    currentController?.transportControls?.play()
+                    sendToDeezer { it.play() }
                     updatePlaybackState(PlaybackState.STATE_PLAYING)
                 }
+
                 override fun onPause() {
-                    Logger.log("Télécommande -> PAUSE Deezer")
-                    currentController?.transportControls?.pause()
+                    Logger.log("Télécommande -> Ordre PAUSE envoyé à Deezer")
+                    sendToDeezer { it.pause() }
                     updatePlaybackState(PlaybackState.STATE_PAUSED)
                 }
+
                 override fun onSkipToNext() {
-                    Logger.log("Télécommande -> SUIVANT Deezer")
+                    Logger.log("Télécommande -> Ordre SUIVANT envoyé à Deezer")
                     silent.start()
-                    currentController?.transportControls?.skipToNext()
+                    sendToDeezer { it.skipToNext() }
                     updatePlaybackState(PlaybackState.STATE_PLAYING)
                 }
+
                 override fun onSkipToPrevious() {
-                    Logger.log("Télécommande -> PRÉCÉDENT Deezer")
+                    Logger.log("Télécommande -> Ordre PRÉCÉDENT envoyé à Deezer")
                     silent.start()
-                    currentController?.transportControls?.skipToPrevious()
+                    sendToDeezer { it.skipToPrevious() }
                     updatePlaybackState(PlaybackState.STATE_PLAYING)
                 }
+
                 override fun onStop() {
-                    currentController?.transportControls?.stop()
+                    Logger.log("Télécommande -> Ordre STOP envoyé à Deezer")
+                    sendToDeezer { it.stop() }
+                    silent.stop()
                     updatePlaybackState(PlaybackState.STATE_STOPPED)
                 }
+
                 override fun onPlayFromMediaId(mediaId: String, extras: Bundle?) {
                     selectColor(mediaId)
                 }
@@ -131,31 +131,31 @@ class ColorProxyService : MediaBrowserService() {
         }
         sessionToken = session.sessionToken
 
+        // État initial de lecture pour que les boutons répondent bien sur l'écran
         updatePlaybackState(PlaybackState.STATE_PLAYING)
-        updateForcedMetadata()
+        updateMetadata()
 
-        pendingController?.let {
-            attach(it)
-            pendingController = null
-        }
-        findDeezerNow()
         silent.start()
     }
 
-    private fun findDeezerNow() {
+    /**
+     * Va chercher à la volée la session active de Deezer et lui applique l'action demandée
+     */
+    private fun sendToDeezer(action: (MediaController.TransportControls) -> Unit) {
         try {
             val manager = getSystemService(MEDIA_SESSION_SERVICE) as MediaSessionManager
             val component = ComponentName(this, NotificationListener::class.java)
-            val deezer = manager.getActiveSessions(component)
-                .firstOrNull { it.packageName == "deezer.android.app" }
-            if (deezer != null) attach(deezer)
+            val sessions = manager.getActiveSessions(component)
+            val deezerController = sessions.firstOrNull { it.packageName == "deezer.android.app" }
+            
+            if (deezerController != null) {
+                action(deezerController.transportControls)
+            } else {
+                Logger.log("Deezer introuvable dans les sessions actives")
+            }
         } catch (e: Exception) {
+            Logger.log("Erreur lors de l'envoi de la commande à Deezer : ${e.message}")
         }
-    }
-
-    private fun attach(sourceController: MediaController) {
-        currentController = sourceController
-        Logger.log("Deezer lié en arrière-plan pour le pilotage aveugle")
     }
 
     private fun updatePlaybackState(state: Int) {
@@ -176,7 +176,7 @@ class ColorProxyService : MediaBrowserService() {
             .putString("color1", c1)
             .putString("color2", c2)
             .apply()
-        updateForcedMetadata()
+        updateMetadata()
     }
 
     private fun selectColor(mediaId: String) {
@@ -193,7 +193,8 @@ class ColorProxyService : MediaBrowserService() {
         applyColor(tone.c1, tone.c2)
     }
 
-    private fun updateForcedMetadata() {
+    private fun updateMetadata() {
+        // LE MUR ANTI-JAQUETTE : On impose toujours notre dégradé
         val artwork = makeColorArtwork(1000, 1000)
 
         val builder = MediaMetadata.Builder()
@@ -271,12 +272,12 @@ class ColorProxyService : MediaBrowserService() {
             families.forEachIndexed { index, family ->
                 val sample = family.tones[minOf(3, family.tones.size - 1)]
                 val icon = makeGradientBitmap(200, 200, sample.c1, sample.c2)
-                val descFam = MediaDescription.Builder()
+                val desc = MediaDescription.Builder()
                     .setMediaId("fam_$index")
                     .setTitle(family.name)
                     .setIconBitmap(icon)
                     .build()
-                items.add(MediaBrowser.MediaItem(descFam, MediaBrowser.MediaItem.FLAG_BROWSABLE))
+                items.add(MediaBrowser.MediaItem(desc, MediaBrowser.MediaItem.FLAG_BROWSABLE))
             }
         } else if (parentId.startsWith("fam_")) {
             val familyIndex = parentId.removePrefix("fam_").toIntOrNull()
@@ -284,12 +285,12 @@ class ColorProxyService : MediaBrowserService() {
             if (family != null) {
                 family.tones.forEachIndexed { toneIndex, tone ->
                     val icon = makeGradientBitmap(200, 200, tone.c1, tone.c2)
-                    val descTone = MediaDescription.Builder()
+                    val desc = MediaDescription.Builder()
                         .setMediaId("col_${familyIndex}_$toneIndex")
                         .setTitle(tone.name)
                         .setIconBitmap(icon)
                         .build()
-                    items.add(MediaBrowser.MediaItem(descTone, MediaBrowser.MediaItem.FLAG_PLAYABLE))
+                    items.add(MediaBrowser.MediaItem(desc, MediaBrowser.MediaItem.FLAG_PLAYABLE))
                 }
             }
         }
