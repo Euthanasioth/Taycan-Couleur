@@ -11,8 +11,6 @@ import android.media.session.MediaSession
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.service.media.MediaBrowserService
 
 class Tone(val name: String, val c1: String, val c2: String)
@@ -25,21 +23,11 @@ class ColorProxyService : MediaBrowserService() {
     private var currentController: MediaController? = null
     private var currentCallback: MediaController.Callback? = null
     private var lastReassert = 0L
-    private var cachedKey: String? = null
-    private var cachedBitmap: Bitmap? = null
-    private val handler = Handler(Looper.getMainLooper())
-    private val stopHandler = Handler(Looper.getMainLooper())
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private val silent = SilentPlayer()
 
-    private val antiDeezerRunnable = object : Runnable {
-        override fun run() {
-            reassertVisuals()
-            handler.postDelayed(this, 1000L)
-        }
-    }
-
     companion object {
-        private const val PAUSE_KEEP_MS = 10 * 60 * 1000L
+        private const val PAUSE_KEEP_MS = 5 * 60 * 1000L
         private const val STOP_KEEP_MS = 60 * 1000L
         private const val PRE_KEEP_MS = 3 * 60 * 1000L
 
@@ -107,8 +95,6 @@ class ColorProxyService : MediaBrowserService() {
     override fun onCreate() {
         super.onCreate()
         instance = this
-        Logger.init(this)
-        Logger.log("service créé")
 
         session = MediaSession(this, "TaycanColorProxy")
         session.setFlags(
@@ -134,12 +120,10 @@ class ColorProxyService : MediaBrowserService() {
 
         silent.start()
         armSilentSafety()
-
-        handler.postDelayed(antiDeezerRunnable, 1000L)
     }
 
     private fun armSilentSafety() {
-        stopHandler.postDelayed({
+        handler.postDelayed({
             val st = currentController?.playbackState?.state
             if (st != PlaybackState.STATE_PLAYING) silent.stop()
         }, PRE_KEEP_MS)
@@ -158,23 +142,18 @@ class ColorProxyService : MediaBrowserService() {
 
     private fun reassert() {
         val now = System.currentTimeMillis()
-        if (now - lastReassert < 3000) return
+        if (now - lastReassert < 5000) return
         lastReassert = now
-        reassertVisuals()
-    }
-
-    private fun reassertVisuals() {
-        if (currentController == null) findDeezerNow()
-        val c = currentController
-        val st = c?.playbackState
+        findDeezerNow()
+        val c = currentController ?: return
+        val st = c.playbackState
         val s = st?.state ?: PlaybackState.STATE_PAUSED
         var p: Long = st?.position ?: 0L
         if (st != null && s == PlaybackState.STATE_PLAYING) {
             p += ((android.os.SystemClock.elapsedRealtime() - st.lastPositionUpdateTime) * st.playbackSpeed).toLong()
         }
-        
         session.setPlaybackState(buildState(s, p))
-        updateMetadata(c?.metadata ?: lastSourceMetadata)
+        updateMetadata(c.metadata)
     }
 
     private fun applyColor(c1: String, c2: String) {
@@ -201,28 +180,20 @@ class ColorProxyService : MediaBrowserService() {
 
     private fun attach(sourceController: MediaController) {
         if (currentController?.sessionToken == sourceController.sessionToken) return
-        Logger.log("rattaché à Deezer")
         currentCallback?.let { currentController?.unregisterCallback(it) }
         currentController = sourceController
 
         session.setCallback(object : MediaSession.Callback() {
             override fun onPlay() {
-                Logger.log("commande voiture : lecture")
                 silent.start()
                 sourceController.transportControls.play()
             }
-            override fun onPause() {
-                Logger.log("commande voiture : pause")
-                sourceController.transportControls.pause()
-                updateMetadata(currentController?.metadata)
-            }
+            override fun onPause() { sourceController.transportControls.pause() }
             override fun onSkipToNext() {
-                Logger.log("commande voiture : suivant")
                 silent.start()
                 sourceController.transportControls.skipToNext()
             }
             override fun onSkipToPrevious() {
-                Logger.log("commande voiture : précédent")
                 silent.start()
                 sourceController.transportControls.skipToPrevious()
             }
@@ -234,35 +205,31 @@ class ColorProxyService : MediaBrowserService() {
 
         val callback = object : MediaController.Callback() {
             override fun onMetadataChanged(metadata: MediaMetadata?) {
-                updateMetadata(currentController?.metadata)
+                updateMetadata(metadata)
             }
 
             override fun onPlaybackStateChanged(state: PlaybackState?) {
                 val s = state?.state ?: PlaybackState.STATE_PAUSED
                 val p: Long = state?.position ?: 0L
-                Logger.log("Deezer : état=$s")
-                
                 session.setPlaybackState(buildState(s, p))
+                
+                // L'UNIQUE AJOUT PROPRE : On ré-affirme nos métadonnées à chaque changement d'état
                 updateMetadata(currentController?.metadata)
 
                 when (s) {
                     PlaybackState.STATE_PLAYING -> {
-                        stopHandler.removeCallbacksAndMessages(null)
+                        handler.removeCallbacksAndMessages(null)
                         silent.start()
                     }
                     PlaybackState.STATE_PAUSED -> {
-                        stopHandler.removeCallbacksAndMessages(null)
-                        updateMetadata(currentController?.metadata)
-                        handler.postDelayed({ updateMetadata(currentController?.metadata) }, 200L)
-                        stopHandler.postDelayed({ silent.stop() }, PAUSE_KEEP_MS)
+                        handler.removeCallbacksAndMessages(null)
+                        handler.postDelayed({ silent.stop() }, PAUSE_KEEP_MS)
                     }
                     PlaybackState.STATE_STOPPED, PlaybackState.STATE_NONE -> {
-                        stopHandler.removeCallbacksAndMessages(null)
-                        stopHandler.postDelayed({ silent.stop() }, STOP_KEEP_MS)
+                        handler.removeCallbacksAndMessages(null)
+                        handler.postDelayed({ silent.stop() }, STOP_KEEP_MS)
                     }
-                    else -> {
-                        stopHandler.removeCallbacksAndMessages(null)
-                    }
+                    else -> { }
                 }
             }
         }
@@ -293,18 +260,16 @@ class ColorProxyService : MediaBrowserService() {
     }
 
     private fun updateMetadata(source: MediaMetadata?) {
-        if (source != null) {
-            lastSourceMetadata = source
-        }
-        val fallbackSource = lastSourceMetadata
+        if (source == null) return
+        lastSourceMetadata = source
 
         val artwork = makeColorArtwork(1000, 1000)
 
         val builder = MediaMetadata.Builder()
-        builder.putString(MediaMetadata.METADATA_KEY_TITLE, fallbackSource?.getString(MediaMetadata.METADATA_KEY_TITLE) ?: "Ambiance Taycan")
-        builder.putString(MediaMetadata.METADATA_KEY_ARTIST, fallbackSource?.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: "Contrôle Couleur")
-        builder.putString(MediaMetadata.METADATA_KEY_ALBUM, fallbackSource?.getString(MediaMetadata.METADATA_KEY_ALBUM) ?: "Personnalisation")
-        builder.putLong(MediaMetadata.METADATA_KEY_DURATION, fallbackSource?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: -1L)
+        builder.putString(MediaMetadata.METADATA_KEY_TITLE, source.getString(MediaMetadata.METADATA_KEY_TITLE))
+        builder.putString(MediaMetadata.METADATA_KEY_ARTIST, source.getString(MediaMetadata.METADATA_KEY_ARTIST))
+        builder.putString(MediaMetadata.METADATA_KEY_ALBUM, source.getString(MediaMetadata.METADATA_KEY_ALBUM))
+        builder.putLong(MediaMetadata.METADATA_KEY_DURATION, source.getLong(MediaMetadata.METADATA_KEY_DURATION))
         builder.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artwork)
         builder.putBitmap(MediaMetadata.METADATA_KEY_ART, artwork)
         builder.putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, artwork)
@@ -316,13 +281,7 @@ class ColorProxyService : MediaBrowserService() {
         val prefs = getSharedPreferences("taycan_couleur", MODE_PRIVATE)
         val c1 = prefs.getString("color1", "#FF3DBB")!!
         val c2 = prefs.getString("color2", "#8A2BE2")!!
-        val key = "$c1|$c2|$width|$height"
-        val cached = cachedBitmap
-        if (cached != null && cachedKey == key) return cached
-        val b = makeGradientBitmap(width, height, c1, c2)
-        cachedBitmap = b
-        cachedKey = key
-        return b
+        return makeGradientBitmap(width, height, c1, c2)
     }
 
     private fun makeGradientBitmap(width: Int, height: Int, c1: String, c2: String): Bitmap {
@@ -346,7 +305,6 @@ class ColorProxyService : MediaBrowserService() {
         clientUid: Int,
         rootHints: Bundle?
     ): BrowserRoot {
-        Logger.log("onGetRoot depuis $clientPackageName")
         reassert()
         val extras = Bundle()
         extras.putBoolean("android.media.browse.CONTENT_STYLE_SUPPORTED", true)
@@ -410,13 +368,10 @@ class ColorProxyService : MediaBrowserService() {
 
     override fun onDestroy() {
         super.onDestroy()
-        Logger.log("service détruit")
         handler.removeCallbacksAndMessages(null)
-        stopHandler.removeCallbacksAndMessages(null)
         silent.stop()
         currentCallback?.let { currentController?.unregisterCallback(it) }
         session.release()
-        cachedBitmap = null
         instance = null
     }
 }
