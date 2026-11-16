@@ -99,7 +99,6 @@ class ColorProxyService : MediaBrowserService() {
                 override fun onPlay() {
                     Logger.log("Télécommande -> PLAY Deezer")
                     silent.start()
-                    // Si on a un contrôleur Deezer lié, on transmet l'ordre en aveugle
                     currentController?.transportControls?.play()
                     updatePlaybackState(PlaybackState.STATE_PLAYING)
                 }
@@ -132,7 +131,6 @@ class ColorProxyService : MediaBrowserService() {
         }
         sessionToken = session.sessionToken
 
-        // On force notre état initial et nos métadonnées figées
         updatePlaybackState(PlaybackState.STATE_PLAYING)
         updateForcedMetadata()
 
@@ -196,7 +194,6 @@ class ColorProxyService : MediaBrowserService() {
     }
 
     private fun updateForcedMetadata() {
-        // LE MUR TOTAL : Seul notre dégradé et notre texte personnalisé existent pour l'écran de la voiture
         val artwork = makeColorArtwork(1000, 1000)
 
         val builder = MediaMetadata.Builder()
@@ -264,14 +261,12 @@ class ColorProxyService : MediaBrowserService() {
             items.add(MediaBrowser.MediaItem(desc, MediaBrowser.MediaItem.FLAG_BROWSABLE))
         } else if (parentId == "tab_colors") {
             val randomIcon = makeGradientBitmap(200, 200, "#00FFFF", "#FF00CC")
-            val randomDesc = MediaBrowser.MediaItemBuilderCompat.fromId("random") // standard construction
-            // ... (gardé identique au reste de ton code pour les listes)
-            val desc = MediaDescription.Builder()
+            val randomDesc = MediaDescription.Builder()
                 .setMediaId("random")
                 .setTitle("Aléatoire")
                 .setIconBitmap(randomIcon)
                 .build()
-            items.add(MediaBrowser.MediaItem(desc, MediaBrowser.MediaItem.FLAG_PLAYABLE))
+            items.add(MediaBrowser.MediaItem(randomDesc, MediaBrowser.MediaItem.FLAG_PLAYABLE))
 
             families.forEachIndexed { index, family ->
                 val sample = family.tones[minOf(3, family.tones.size - 1)]
