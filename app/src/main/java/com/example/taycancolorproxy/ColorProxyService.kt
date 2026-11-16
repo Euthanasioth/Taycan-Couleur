@@ -37,6 +37,14 @@ class ColorProxyService : MediaBrowserService() {
         }
     }
 
+    // RAFALE ANTI-SCINTILLEMENT : Envoie plusieurs updates ultra-rapprochés pour tuer le logo Deezer au vol
+    private fun burstReassertion() {
+        updateMetadata(lastSourceMetadata)
+        handler.postDelayed({ updateMetadata(lastSourceMetadata) }, 50L)
+        handler.postDelayed({ updateMetadata(lastSourceMetadata) }, 150L)
+        handler.postDelayed({ updateMetadata(lastSourceMetadata) }, 300L)
+    }
+
     companion object {
         private var instance: ColorProxyService? = null
         private var pendingController: MediaController? = null
@@ -146,19 +154,23 @@ class ColorProxyService : MediaBrowserService() {
                 Logger.log("Action Master : Play")
                 silent.start()
                 sourceController?.transportControls?.play()
+                burstReassertion()
             }
             override fun onPause() {
                 Logger.log("Action Master : Pause")
                 sourceController?.transportControls?.pause()
-                updateMetadata(lastSourceMetadata)
+                // RAFALE DIRECTE A LA PAUSE POUR EVITER LE SCINTILLEMENT DEEZER
+                burstReassertion()
             }
             override fun onSkipToNext() {
                 silent.start()
                 sourceController?.transportControls?.skipToNext()
+                burstReassertion()
             }
             override fun onSkipToPrevious() {
                 silent.start()
                 sourceController?.transportControls?.skipToPrevious()
+                burstReassertion()
             }
             override fun onStop() {
                 sourceController?.transportControls?.stop()
@@ -181,14 +193,15 @@ class ColorProxyService : MediaBrowserService() {
                 if (metadata != null) {
                     lastSourceMetadata = metadata
                 }
-                updateMetadata(lastSourceMetadata)
+                // RAFALE QUAND DEEZER CHANGE DE CHANSON OU POUSSE SES METADONNEES
+                burstReassertion()
             }
 
             override fun onPlaybackStateChanged(state: PlaybackState?) {
                 val s = state?.state ?: PlaybackState.STATE_PLAYING
                 val p: Long = state?.position ?: 0L
                 session.setPlaybackState(buildState(s, p))
-                updateMetadata(lastSourceMetadata)
+                burstReassertion()
 
                 if (s == PlaybackState.STATE_PLAYING) {
                     silent.start()
