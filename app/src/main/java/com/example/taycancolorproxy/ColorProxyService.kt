@@ -88,7 +88,7 @@ class ColorProxyService : MediaBrowserService() {
         super.onCreate()
         instance = this
         Logger.init(this)
-        Logger.log("service créé (commandes + affichage indépendant)")
+        Logger.log("service créé (télécommande aveugle anti-jaquette)")
 
         session = MediaSession(this, "TaycanColorProxy").apply {
             setFlags(
@@ -97,25 +97,28 @@ class ColorProxyService : MediaBrowserService() {
             )
             setCallback(object : MediaSession.Callback() {
                 override fun onPlay() {
-                    Logger.log("Action : PLAY vers Deezer")
+                    Logger.log("Télécommande -> PLAY Deezer")
                     silent.start()
+                    // Si on a un contrôleur Deezer lié, on transmet l'ordre en aveugle
                     currentController?.transportControls?.play()
                     updatePlaybackState(PlaybackState.STATE_PLAYING)
                 }
                 override fun onPause() {
-                    Logger.log("Action : PAUSE vers Deezer")
+                    Logger.log("Télécommande -> PAUSE Deezer")
                     currentController?.transportControls?.pause()
                     updatePlaybackState(PlaybackState.STATE_PAUSED)
                 }
                 override fun onSkipToNext() {
-                    Logger.log("Action : SUIVANT vers Deezer")
+                    Logger.log("Télécommande -> SUIVANT Deezer")
                     silent.start()
                     currentController?.transportControls?.skipToNext()
+                    updatePlaybackState(PlaybackState.STATE_PLAYING)
                 }
                 override fun onSkipToPrevious() {
-                    Logger.log("Action : PRÉCÉDENT vers Deezer")
+                    Logger.log("Télécommande -> PRÉCÉDENT Deezer")
                     silent.start()
                     currentController?.transportControls?.skipToPrevious()
+                    updatePlaybackState(PlaybackState.STATE_PLAYING)
                 }
                 override fun onStop() {
                     currentController?.transportControls?.stop()
@@ -129,8 +132,9 @@ class ColorProxyService : MediaBrowserService() {
         }
         sessionToken = session.sessionToken
 
-        updatePlaybackState(PlaybackState.STATE_PAUSED)
-        updateMetadata()
+        // On force notre état initial et nos métadonnées figées
+        updatePlaybackState(PlaybackState.STATE_PLAYING)
+        updateForcedMetadata()
 
         pendingController?.let {
             attach(it)
@@ -153,7 +157,7 @@ class ColorProxyService : MediaBrowserService() {
 
     private fun attach(sourceController: MediaController) {
         currentController = sourceController
-        Logger.log("Contrôleur Deezer lié pour les commandes")
+        Logger.log("Deezer lié en arrière-plan pour le pilotage aveugle")
     }
 
     private fun updatePlaybackState(state: Int) {
@@ -174,7 +178,7 @@ class ColorProxyService : MediaBrowserService() {
             .putString("color1", c1)
             .putString("color2", c2)
             .apply()
-        updateMetadata()
+        updateForcedMetadata()
     }
 
     private fun selectColor(mediaId: String) {
@@ -191,7 +195,8 @@ class ColorProxyService : MediaBrowserService() {
         applyColor(tone.c1, tone.c2)
     }
 
-    private fun updateMetadata() {
+    private fun updateForcedMetadata() {
+        // LE MUR TOTAL : Seul notre dégradé et notre texte personnalisé existent pour l'écran de la voiture
         val artwork = makeColorArtwork(1000, 1000)
 
         val builder = MediaMetadata.Builder()
@@ -259,22 +264,24 @@ class ColorProxyService : MediaBrowserService() {
             items.add(MediaBrowser.MediaItem(desc, MediaBrowser.MediaItem.FLAG_BROWSABLE))
         } else if (parentId == "tab_colors") {
             val randomIcon = makeGradientBitmap(200, 200, "#00FFFF", "#FF00CC")
-            val randomDesc = MediaDescription.Builder()
+            val randomDesc = MediaBrowser.MediaItemBuilderCompat.fromId("random") // standard construction
+            // ... (gardé identique au reste de ton code pour les listes)
+            val desc = MediaDescription.Builder()
                 .setMediaId("random")
                 .setTitle("Aléatoire")
                 .setIconBitmap(randomIcon)
                 .build()
-            items.add(MediaBrowser.MediaItem(randomDesc, MediaBrowser.MediaItem.FLAG_PLAYABLE))
+            items.add(MediaBrowser.MediaItem(desc, MediaBrowser.MediaItem.FLAG_PLAYABLE))
 
             families.forEachIndexed { index, family ->
                 val sample = family.tones[minOf(3, family.tones.size - 1)]
                 val icon = makeGradientBitmap(200, 200, sample.c1, sample.c2)
-                val desc = MediaDescription.Builder()
+                val descFam = MediaDescription.Builder()
                     .setMediaId("fam_$index")
                     .setTitle(family.name)
                     .setIconBitmap(icon)
                     .build()
-                items.add(MediaBrowser.MediaItem(desc, MediaBrowser.MediaItem.FLAG_BROWSABLE))
+                items.add(MediaBrowser.MediaItem(descFam, MediaBrowser.MediaItem.FLAG_BROWSABLE))
             }
         } else if (parentId.startsWith("fam_")) {
             val familyIndex = parentId.removePrefix("fam_").toIntOrNull()
@@ -282,12 +289,12 @@ class ColorProxyService : MediaBrowserService() {
             if (family != null) {
                 family.tones.forEachIndexed { toneIndex, tone ->
                     val icon = makeGradientBitmap(200, 200, tone.c1, tone.c2)
-                    val desc = MediaDescription.Builder()
+                    val descTone = MediaDescription.Builder()
                         .setMediaId("col_${familyIndex}_$toneIndex")
                         .setTitle(tone.name)
                         .setIconBitmap(icon)
                         .build()
-                    items.add(MediaBrowser.MediaItem(desc, MediaBrowser.MediaItem.FLAG_PLAYABLE))
+                    items.add(MediaBrowser.MediaItem(descTone, MediaBrowser.MediaItem.FLAG_PLAYABLE))
                 }
             }
         }
