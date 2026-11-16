@@ -293,42 +293,37 @@ class ColorProxyService : MediaBrowserService() {
 
             override fun onPlaybackStateChanged(state: PlaybackState?) {
                 val currentState = state?.state ?: PlaybackState.STATE_PAUSED
-                val position = state?.position ?: 0L
-
+                val position = state?.position ?:0L
                 session.setPlaybackState(buildState(currentState, position))
 
 updateMetadata(lastSourceMetadata)
-reassert()
+scheduleReassertBurst()
 
 when (currentState) {
+    PlaybackState.STATE_PLAYING -> {
+        mainHandler.removeCallbacks(stopSilentRunnable)
+        mainHandler.removeCallbacks(silentSafetyRunnable)
+        silent.start()
+    }
 
+    PlaybackState.STATE_PAUSED -> {
+        mainHandler.removeCallbacks(stopSilentRunnable)
+        mainHandler.postDelayed(
+            stopSilentRunnable,
+            PAUSE_KEEP_MS
+        )
+    }
 
-                when (currentState) {
-                    PlaybackState.STATE_PLAYING -> {
-                        mainHandler.removeCallbacks(stopSilentRunnable)
-                        mainHandler.removeCallbacks(silentSafetyRunnable)
-                        silent.start()
-                    }
+    PlaybackState.STATE_STOPPED,
+    PlaybackState.STATE_NONE -> {
+        mainHandler.removeCallbacks(stopSilentRunnable)
+        mainHandler.postDelayed(
+            stopSilentRunnable,
+            STOP_KEEP_MS
+        )
+    }
+}
 
-                    PlaybackState.STATE_PAUSED -> {
-                        mainHandler.removeCallbacks(stopSilentRunnable)
-                        mainHandler.postDelayed(
-                            stopSilentRunnable,
-                            PAUSE_KEEP_MS
-                        )
-                    }
-
-                    PlaybackState.STATE_STOPPED,
-                    PlaybackState.STATE_NONE -> {
-                        mainHandler.removeCallbacks(stopSilentRunnable)
-                        mainHandler.postDelayed(
-                            stopSilentRunnable,
-                            STOP_KEEP_MS
-                        )
-                    }
-                }
-            }
-        }
 
         sourceController.registerCallback(callback)
         currentControllerCallback = callback
