@@ -42,8 +42,14 @@ class MainActivity : AppCompatActivity() {
         val diagText = TextView(this)
         diagText.textSize = 12f
         diagButton.setOnClickListener {
+                    val diagButton = Button(this)
+        diagButton.text = "Voir les sessions média actives"
+        val diagText = TextView(this)
+        diagText.textSize = 12f
+        diagButton.setOnClickListener {
             try {
                 val manager = getSystemService(MEDIA_SESSION_SERVICE) as MediaSessionManager
+                // CORRECTION ICI : on pointe vers DeezerNotificationListener
                 val component = ComponentName(this, DeezerNotificationListener::class.java)
                 val sessions = manager.getActiveSessions(component)
                 val sb = StringBuilder()
@@ -51,10 +57,13 @@ class MainActivity : AppCompatActivity() {
                     sb.append("${i + 1}. ${c.packageName} (état ${c.playbackState?.state})\n")
                 }
                 diagText.text = if (sb.isEmpty()) "Aucune session active" else sb.toString()
-                catch (e: Exception) {
+            } catch (e: Exception) {
                 diagText.text = "Erreur : " + e.message
             }
         }
+        layout.addView(diagButton)
+        layout.addView(diagText)
+
         layout.addView(diagButton)
         layout.addView(diagText)
 
