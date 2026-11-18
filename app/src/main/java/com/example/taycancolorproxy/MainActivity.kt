@@ -17,7 +17,6 @@ import java.io.File
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Logger.init(this)
 
         val prefs: SharedPreferences = getSharedPreferences("taycan_couleur", MODE_PRIVATE)
 
@@ -58,33 +57,6 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(diagButton)
         layout.addView(diagText)
-
-        val logLabel = TextView(this)
-        logLabel.setPadding(0, 60, 0, 20)
-        logLabel.text = "Journal de la voiture :"
-        logLabel.textSize = 16f
-        layout.addView(logLabel)
-
-        val logText = TextView(this)
-        logText.textSize = 11f
-        logText.setTextIsSelectable(true)
-        logText.text = Logger.read()
-        layout.addView(logText)
-
-        val refreshButton = Button(this)
-        refreshButton.text = "Rafraîchir le journal"
-        refreshButton.setOnClickListener {
-            logText.text = Logger.read()
-        }
-        layout.addView(refreshButton)
-
-        val clearLogButton = Button(this)
-        clearLogButton.text = "Effacer le journal"
-        clearLogButton.setOnClickListener {
-            Logger.clear()
-            logText.text = "Journal vide"
-        }
-        layout.addView(clearLogButton)
 
         val colorLabel = TextView(this)
         colorLabel.setPadding(0, 60, 0, 20)
