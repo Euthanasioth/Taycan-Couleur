@@ -2,13 +2,15 @@ package com.example.taycancolorproxy
 
 import android.content.Intent
 import android.graphics.Bitmap
+import android.os.Bundle
+import android.support.v4.media.MediaBrowserCompat
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
-import androidx.media.MediaSessionService
 import android.view.KeyEvent
+import androidx.media.MediaBrowserServiceCompat
 
-class ColorProxyService : MediaSessionService() {
+class ColorProxyService : MediaBrowserServiceCompat() {
 
     companion object {
         var instance: ColorProxyService? = null
@@ -28,13 +30,12 @@ class ColorProxyService : MediaSessionService() {
                         PlaybackStateCompat.ACTION_PLAY or
                         PlaybackStateCompat.ACTION_PAUSE or
                         PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
-                        PlaybackStateCompat.ACTION_SKIP_TO_PREV or
+                        PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
                         PlaybackStateCompat.ACTION_PLAY_PAUSE
                     )
                     .build()
             )
 
-            // Redirection des boutons de la voiture vers Deezer
             setCallback(object : MediaSessionCompat.Callback() {
                 override fun onPlay() {
                     sendMediaButtonToDeezer(KeyEvent.KEYCODE_MEDIA_PLAY)
@@ -60,23 +61,20 @@ class ColorProxyService : MediaSessionService() {
     }
 
     fun updateMetadata(title: String?, artist: String?, bitmap: Bitmap?) {
-        // 1. USAGE INTERNE : Extraction des couleurs pour tes LEDS d'ambiance
         if (bitmap != null) {
             processAmbientColor(bitmap)
         }
 
-        // 2. USAGE VOITURE : On envoie le titre/artiste mais ON EXCLUT la pochette
         val cleanedMetadata = MediaMetadataCompat.Builder().apply {
             if (title != null) putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
             if (artist != null) putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
-            // AUCUN artwork transmis à Android Auto -> Interface propre et neutre !
         }.build()
 
         mediaSession.setMetadata(cleanedMetadata)
     }
 
     private fun processAmbientColor(bitmap: Bitmap) {
-        // Insère ici ton algorithme d'extraction de couleur pour tes LEDs
+        // Traitement couleur LEDs ici
     }
 
     private fun sendMediaButtonToDeezer(keyCode: Int) {
@@ -93,8 +91,19 @@ class ColorProxyService : MediaSessionService() {
         sendBroadcast(upIntent)
     }
 
-    override fun onGetSession(controllerInfo: MediaSessionInfo): MediaSessionCompat? {
-        return mediaSession
+    override fun onGetRoot(
+        clientPackageName: String,
+        clientUid: Int,
+        rootHints: Bundle?
+    ): BrowserRoot {
+        return BrowserRoot("taycan_root", null)
+    }
+
+    override fun onLoadChildren(
+        parentId: String,
+        result: Result<MutableList<MediaBrowserCompat.MediaItem>>
+    ) {
+        result.sendResult(mutableListOf())
     }
 
     override fun onDestroy() {
