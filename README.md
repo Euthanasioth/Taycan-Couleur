@@ -1,4 +1,4 @@
-# Lecteur Taycan (Taycan-Couleur)
+# Lecteur Taycan (Taycan-Couleur).
 
 Application Android développée en Kotlin (`com.example.taycancolorproxy`) conçue pour agir comme un pont multimédia intelligent entre **Deezer** et **Android Auto**.
 
