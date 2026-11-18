@@ -22,8 +22,8 @@
         </service>
 
         <!-- 2. Listener Deezer -->
-        <service
-            android:name=".NotificationListener"
+                <service
+            android:name=".DeezerNotificationListener"
             android:exported="true"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
