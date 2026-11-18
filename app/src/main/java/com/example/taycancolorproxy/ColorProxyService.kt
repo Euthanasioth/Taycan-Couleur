@@ -29,19 +29,20 @@ class ColorProxyService : MediaBrowserService() {
     private var currentCallback: MediaController.Callback? = null
 
     private val audioFocusListener: AudioManager.OnAudioFocusChangeListener by lazy {
-    AudioManager.OnAudioFocusChangeListener { change ->
-        if (change == AudioManager.AUDIOFOCUS_LOSS ||
-            change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
-        ) {
-            // On redemande immédiatement le focus pour rester prioritaire
-            try {
-                val am = getSystemService(AUDIO_SERVICE) as AudioManager
-                am.requestAudioFocus(
-                    this@ColorProxyService.audioFocusListener,
-                    AudioManager.STREAM_MUSIC,
-                    AudioManager.AUDIOFOCUS_GAIN
-                )
-            } catch (_: Exception) {}
+        AudioManager.OnAudioFocusChangeListener { change ->
+            if (change == AudioManager.AUDIOFOCUS_LOSS ||
+                change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
+            ) {
+                try {
+                    val am = getSystemService(AUDIO_SERVICE) as AudioManager
+                    am.requestAudioFocus(
+                        this@ColorProxyService.audioFocusListener,
+                        AudioManager.STREAM_MUSIC,
+                        AudioManager.AUDIOFOCUS_GAIN
+                    )
+                } catch (_: Exception) {
+                }
+            }
         }
     }
 
@@ -114,10 +115,8 @@ class ColorProxyService : MediaBrowserService() {
         super.onCreate()
         instance = this
 
-        // 1) Foreground service média (indispensable pour la priorité)
         startAsForeground()
 
-        // 2) Session média
         session = MediaSession(this, "TaycanColorProxy")
         session.setFlags(
             MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or
@@ -134,7 +133,6 @@ class ColorProxyService : MediaBrowserService() {
 
         session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, 0))
 
-        // 3) Focus audio
         try {
             val am = getSystemService(AUDIO_SERVICE) as AudioManager
             am.requestAudioFocus(
@@ -142,9 +140,9 @@ class ColorProxyService : MediaBrowserService() {
                 AudioManager.STREAM_MUSIC,
                 AudioManager.AUDIOFOCUS_GAIN
             )
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
 
-        // 4) Attache immédiate si possible
         pendingController?.let {
             attach(it)
             pendingController = null
@@ -186,7 +184,8 @@ class ColorProxyService : MediaBrowserService() {
             val deezer = manager.getActiveSessions(component)
                 .firstOrNull { it.packageName == "deezer.android.app" }
             if (deezer != null) attach(deezer)
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
     }
 
     private fun applyColor(c1: String, c2: String) {
@@ -213,7 +212,6 @@ class ColorProxyService : MediaBrowserService() {
 
     private fun attach(sourceController: MediaController) {
         if (currentController?.sessionToken == sourceController.sessionToken) {
-            // Même session : on réactive juste la priorité
             session.isActive = true
             return
         }
@@ -243,7 +241,6 @@ class ColorProxyService : MediaBrowserService() {
                         state?.position ?: 0
                     )
                 )
-                // Force la réactivation pour rester prioritaire
                 session.isActive = true
             }
         }
@@ -385,7 +382,8 @@ class ColorProxyService : MediaBrowserService() {
         try {
             val am = getSystemService(AUDIO_SERVICE) as AudioManager
             am.abandonAudioFocus(audioFocusListener)
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
         session.release()
         instance = null
     }
