@@ -1,10 +1,13 @@
 package com.example.taycancolorproxy
 
+import android.Manifest
 import android.content.ComponentName
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.media.session.MediaSessionManager
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
@@ -15,8 +18,25 @@ import androidx.appcompat.app.AppCompatActivity
 import java.io.File
 
 class MainActivity : AppCompatActivity() {
+
+    companion object {
+        private const val REQ_POST_NOTIF = 1001
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Demande de permission POST_NOTIFICATIONS (Android 13+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED
+            ) {
+                requestPermissions(
+                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                    REQ_POST_NOTIF
+                )
+            }
+        }
 
         val prefs: SharedPreferences = getSharedPreferences("taycan_couleur", MODE_PRIVATE)
 
@@ -44,7 +64,8 @@ class MainActivity : AppCompatActivity() {
         diagButton.setOnClickListener {
             try {
                 val manager = getSystemService(MEDIA_SESSION_SERVICE) as MediaSessionManager
-                val component = ComponentName(this, DeezerNotificationListener::class.java)
+                // Correction : NotificationListener, pas DeezerNotificationListener
+                val component = ComponentName(this, NotificationListener::class.java)
                 val sessions = manager.getActiveSessions(component)
                 val sb = StringBuilder()
                 sessions.forEachIndexed { i, c ->
