@@ -7,7 +7,6 @@ import android.content.ComponentName
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.media.AudioManager
 import android.media.MediaDescription
 import android.media.MediaMetadata
 import android.media.browse.MediaBrowser
@@ -27,24 +26,6 @@ class ColorProxyService : MediaBrowserService() {
     private var lastSourceMetadata: MediaMetadata? = null
     private var currentController: MediaController? = null
     private var currentCallback: MediaController.Callback? = null
-
-    private val audioFocusListener: AudioManager.OnAudioFocusChangeListener by lazy {
-        AudioManager.OnAudioFocusChangeListener { change ->
-            if (change == AudioManager.AUDIOFOCUS_LOSS ||
-                change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
-            ) {
-                try {
-                    val am = getSystemService(AUDIO_SERVICE) as AudioManager
-                    am.requestAudioFocus(
-                        this@ColorProxyService.audioFocusListener,
-                        AudioManager.STREAM_MUSIC,
-                        AudioManager.AUDIOFOCUS_GAIN
-                    )
-                } catch (_: Exception) {
-                }
-            }
-        }
-    }
 
     companion object {
         private const val NOTIF_ID = 1001
@@ -132,16 +113,6 @@ class ColorProxyService : MediaBrowserService() {
         })
 
         session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, 0))
-
-        try {
-            val am = getSystemService(AUDIO_SERVICE) as AudioManager
-            am.requestAudioFocus(
-                audioFocusListener,
-                AudioManager.STREAM_MUSIC,
-                AudioManager.AUDIOFOCUS_GAIN
-            )
-        } catch (_: Exception) {
-        }
 
         pendingController?.let {
             attach(it)
@@ -379,11 +350,6 @@ class ColorProxyService : MediaBrowserService() {
     override fun onDestroy() {
         super.onDestroy()
         currentCallback?.let { currentController?.unregisterCallback(it) }
-        try {
-            val am = getSystemService(AUDIO_SERVICE) as AudioManager
-            am.abandonAudioFocus(audioFocusListener)
-        } catch (_: Exception) {
-        }
         session.release()
         instance = null
     }
