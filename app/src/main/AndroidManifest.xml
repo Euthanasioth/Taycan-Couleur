@@ -22,14 +22,21 @@
         </activity>
 
         <!-- 1. Service maître compatible Android Auto -->
-        <service
+               <service
             android:name=".ColorProxyService"
             android:exported="true"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
                 <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
+            <meta-data
+                android:name="android.car.app.lib. carroverride.min_target_sdk"
+                android:value="33" />
+            <meta-data
+                android:name="com.google.android.gms.car.application"
+                android:resource="@xml/automotive_app_desc" />
         </service>
+
 
         <!-- 2. Listener Deezer -->
         <service
