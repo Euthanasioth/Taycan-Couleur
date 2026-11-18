@@ -1,110 +1,391 @@
 package com.example.taycancolorproxy
 
-import android.content.Intent
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.ComponentName
+import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.media.AudioManager
+import android.media.MediaDescription
+import android.media.MediaMetadata
+import android.media.browse.MediaBrowser
+import android.media.session.MediaController
+import android.media.session.MediaSession
+import android.media.session.MediaSessionManager
+import android.media.session.PlaybackState
 import android.os.Bundle
-import android.support.v4.media.MediaBrowserCompat
-import android.support.v4.media.MediaMetadataCompat
-import android.support.v4.media.session.MediaSessionCompat
-import android.support.v4.media.session.PlaybackStateCompat
-import androidx.media.MediaBrowserServiceCompat
-import androidx.palette.graphics.Palette
+import android.service.media.MediaBrowserService
 
-class ColorProxyService : MediaBrowserServiceCompat() {
+class Tone(val name: String, val c1: String, val c2: String)
+class Family(val name: String, val tones: List<Tone>)
 
-    private lateinit var mediaSession: MediaSessionCompat
+class ColorProxyService : MediaBrowserService() {
 
-    companion5: Companion? = null
+    private lateinit var session: MediaSession
+    private var lastSourceMetadata: MediaMetadata? = null
+    private var currentController: MediaController? = null
+    private var currentCallback: MediaController.Callback? = null
+
+    private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        if (change == AudioManager.AUDIOFOCUS_LOSS ||
+            change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
+        ) {
+            // On redemande immédiatement le focus pour rester prioritaire
+            try {
+                val am = getSystemService(AUDIO_SERVICE) as AudioManager
+                am.requestAudioFocus(
+                    this@ColorProxyService.audioFocusListener,
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.AUDIOFOCUS_GAIN
+                )
+            } catch (_: Exception) {}
+        }
+    }
+
     companion object {
-        var instance: ColorProxyService? = null
-            private set
+        private const val NOTIF_ID = 1001
+        private const val CHANNEL_ID = "taycan_proxy"
+
+        private var instance: ColorProxyService? = null
+        private var pendingController: MediaController? = null
+
+        fun attachSourceController(sourceController: MediaController) {
+            val s = instance
+            if (s != null) s.attach(sourceController) else pendingController = sourceController
+        }
+
+        private fun hsv(h: Float, s: Float, v: Float): String {
+            val hue = ((h % 360f) + 360f) % 360f
+            val c = Color.HSVToColor(floatArrayOf(hue, s, v))
+            return String.format("#%06X", 0xFFFFFF and c)
+        }
+
+        private fun makeFamily(name: String, hue: Float): Family {
+            val defs = listOf(
+                Triple("Très clair", 0.30f, 1.00f),
+                Triple("Clair", 0.50f, 1.00f),
+                Triple("Doux", 0.70f, 1.00f),
+                Triple("Vif", 1.00f, 1.00f),
+                Triple("Intense", 1.00f, 0.85f),
+                Triple("Profond", 1.00f, 0.65f),
+                Triple("Foncé", 0.90f, 0.45f),
+                Triple("Très foncé", 0.85f, 0.28f)
+            )
+            val tones = defs.map { (label, s, v) ->
+                Tone("$name - $label", hsv(hue - 8f, s, v), hsv(hue + 8f, s, v))
+            }
+            return Family(name, tones)
+        }
+
+        val families: List<Family> = listOf(
+            makeFamily("Rose", 330f),
+            makeFamily("Rouge", 0f),
+            makeFamily("Orange", 25f),
+            makeFamily("Jaune", 50f),
+            makeFamily("Vert", 130f),
+            makeFamily("Turquoise", 175f),
+            makeFamily("Bleu", 215f),
+            makeFamily("Mauve", 275f),
+            Family("Neutres", listOf(
+                Tone("Neutres - Blanc", "#FFFFFF", "#E6E6E6"),
+                Tone("Neutres - Gris clair", "#E0E0E0", "#BDBDBD"),
+                Tone("Neutres - Argent", "#B0B0B0", "#E8E8E8"),
+                Tone("Neutres - Gris", "#8A8A8A", "#5E5E5E"),
+                Tone("Neutres - Anthracite", "#434343", "#2B2B2B"),
+                Tone("Neutres - Noir", "#1A1A1A", "#000000")
+            )),
+            Family("Multicolores", listOf(
+                Tone("Multicolores - Rose et violet", "#FF3DBB", "#8A2BE2"),
+                Tone("Multicolores - Aurore", "#00C9A7", "#845EC2"),
+                Tone("Multicolores - Sunset", "#FF512F", "#F09819"),
+                Tone("Multicolores - Océan", "#2193B0", "#6DD5ED"),
+                Tone("Multicolores - Néon", "#00FFFF", "#FF00CC"),
+                Tone("Multicolores - Lave", "#FF4E00", "#EC9F05"),
+                Tone("Multicolores - Forêt", "#134E5E", "#71B280"),
+                Tone("Multicolores - Bonbon", "#FF9A9E", "#A18CD1")
+            ))
+        )
     }
 
     override fun onCreate() {
         super.onCreate()
         instance = this
 
-        // 1. Initialisation de la MediaSession complète avec Callbacks
-        mediaSession = MediaSessionCompat(this, "TaycanColorProxySession").apply {
-            setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS)
-            
-            // Définition de l'état initial (En lecture / Prêt)
-            setPlaybackState(
-                PlaybackStateCompat.Builder()
-                    .setState(PlaybackStateCompat.STATE_PLAYING, 0L, 1.0f)
-                    .setActions(PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or PlaybackStateCompat.ACTION_SKIP_TO_NEXT or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS)
-                    .build()
+        // 1) Foreground service média (indispensable pour la priorité)
+        startAsForeground()
+
+        // 2) Session média
+        session = MediaSession(this, "TaycanColorProxy")
+        session.setFlags(
+            MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or
+            MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS
+        )
+        sessionToken = session.sessionToken
+        session.isActive = true
+
+        session.setCallback(object : MediaSession.Callback() {
+            override fun onPlayFromMediaId(mediaId: String, extras: Bundle?) {
+                selectColor(mediaId)
+            }
+        })
+
+        session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, 0))
+
+        // 3) Focus audio
+        try {
+            val am = getSystemService(AUDIO_SERVICE) as AudioManager
+            am.requestAudioFocus(
+                audioFocusListener,
+                AudioManager.STREAM_MUSIC,
+                AudioManager.AUDIOFOCUS_GAIN
             )
+        } catch (_: Exception) {}
 
-            // Interception des commandes envoyées par la voiture (commandes au volant ou écran central)
-            setCallback(object : MediaSessionCompat.Callback() {
-                onPlay() {
-                    // Transfère la commande de lecture
-                }
-                override fun onPause() {
-                    // Transfère la commande de pause
-                }
-                override fun onSkipToNext() {
-                    // Passe à la piste suivante
-                }
-                override fun onSkipToPrevious() {
-                    // Passe à la piste précédente
-                }
-            })
+        // 4) Attache immédiate si possible
+        pendingController?.let {
+            attach(it)
+            pendingController = null
+        }
+        findDeezerNow()
+    }
 
-            isActive = true
+    private fun startAsForeground() {
+        try {
+            val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Taycan Couleur",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            nm.createNotificationChannel(channel)
+
+            val notif: Notification = Notification.Builder(this, CHANNEL_ID)
+                .setContentTitle("Taycan Couleur")
+                .setContentText("Proxy de couleur actif")
+                .setSmallIcon(R.drawable.app_icon)
+                .setOngoing(true)
+                .build()
+
+            startForeground(
+                NOTIF_ID,
+                notif,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+            )
+        } catch (e: Exception) {
+            Logger.log("Erreur startForeground : ${e.message}")
+        }
+    }
+
+    private fun findDeezerNow() {
+        try {
+            val manager = getSystemService(MEDIA_SESSION_SERVICE) as MediaSessionManager
+            val component = ComponentName(this, NotificationListener::class.java)
+            val deezer = manager.getActiveSessions(component)
+                .firstOrNull { it.packageName == "deezer.android.app" }
+            if (deezer != null) attach(deezer)
+        } catch (_: Exception) {}
+    }
+
+    private fun applyColor(c1: String, c2: String) {
+        getSharedPreferences("taycan_couleur", MODE_PRIVATE).edit()
+            .putString("color1", c1)
+            .putString("color2", c2)
+            .apply()
+        updateMetadata(lastSourceMetadata)
+    }
+
+    private fun selectColor(mediaId: String) {
+        if (mediaId == "random") {
+            val tone = families.random().tones.random()
+            applyColor(tone.c1, tone.c2)
+            return
+        }
+        if (!mediaId.startsWith("col_")) return
+        val parts = mediaId.split("_")
+        val familyIndex = parts.getOrNull(1)?.toIntOrNull() ?: return
+        val toneIndex = parts.getOrNull(2)?.toIntOrNull() ?: return
+        val tone = families.getOrNull(familyIndex)?.tones?.getOrNull(toneIndex) ?: return
+        applyColor(tone.c1, tone.c2)
+    }
+
+    private fun attach(sourceController: MediaController) {
+        if (currentController?.sessionToken == sourceController.sessionToken) {
+            // Même session : on réactive juste la priorité
+            session.isActive = true
+            return
         }
 
-        sessionToken = mediaSession.sessionToken
+        currentCallback?.let { currentController?.unregisterCallback(it) }
+        currentController = sourceController
+
+        session.setCallback(object : MediaSession.Callback() {
+            override fun onPlay() { sourceController.transportControls.play() }
+            override fun onPause() { sourceController.transportControls.pause() }
+            override fun onSkipToNext() { sourceController.transportControls.skipToNext() }
+            override fun onSkipToPrevious() { sourceController.transportControls.skipToPrevious() }
+            override fun onStop() { sourceController.transportControls.stop() }
+            override fun onPlayFromMediaId(mediaId: String, extras: Bundle?) {
+                selectColor(mediaId)
+            }
+        })
+
+        val callback = object : MediaController.Callback() {
+            override fun onMetadataChanged(metadata: MediaMetadata?) {
+                updateMetadata(metadata)
+            }
+            override fun onPlaybackStateChanged(state: PlaybackState?) {
+                session.setPlaybackState(
+                    buildState(
+                        state?.state ?: PlaybackState.STATE_PAUSED,
+                        state?.position ?: 0
+                    )
+                )
+                // Force la réactivation pour rester prioritaire
+                session.isActive = true
+            }
+        }
+        sourceController.registerCallback(callback)
+        currentCallback = callback
+
+        updateMetadata(sourceController.metadata)
+        val currentState = sourceController.playbackState
+        session.setPlaybackState(
+            buildState(
+                currentState?.state ?: PlaybackState.STATE_PAUSED,
+                currentState?.position ?: 0
+            )
+        )
+        session.isActive = true
     }
 
-    override fun onGetRoot(clientPackageName: String, clientUid: Int, rootHints: Bundle?): BrowserRoot {
-        // Autorise la connexion d'Android Auto
-        return BrowserRoot("root_id", null)
+    private fun buildState(state: Int, position: Long): PlaybackState {
+        return PlaybackState.Builder()
+            .setActions(
+                PlaybackState.ACTION_PLAY or
+                PlaybackState.ACTION_PAUSE or
+                PlaybackState.ACTION_SKIP_TO_NEXT or
+                PlaybackState.ACTION_SKIP_TO_PREVIOUS or
+                PlaybackState.ACTION_PLAY_FROM_MEDIA_ID
+            )
+            .setState(state, position, 1f)
+            .build()
     }
 
-    override fun onLoadChildren(parentId: String, result: Result<MutableList<MediaBrowserCompat.MediaItem>>) {
-        // Fournit un élément visuel basique pour que l'app ne soit pas vide dans l'interface de la voiture
-        val mediaItems = mutableListOf<MediaBrowserCompat.MediaItem>()
-        // On peut injecter un item de navigation si besoin
-        result.sendResult(mediaItems)
+    private fun updateMetadata(source: MediaMetadata?) {
+        if (source == null) return
+        lastSourceMetadata = source
+
+        val artwork = makeColorArtwork(1000, 1000)
+
+        val builder = MediaMetadata.Builder()
+        builder.putString(MediaMetadata.METADATA_KEY_TITLE, source.getString(MediaMetadata.METADATA_KEY_TITLE))
+        builder.putString(MediaMetadata.METADATA_KEY_ARTIST, source.getString(MediaMetadata.METADATA_KEY_ARTIST))
+        builder.putString(MediaMetadata.METADATA_KEY_ALBUM, source.getString(MediaMetadata.METADATA_KEY_ALBUM))
+        builder.putLong(MediaMetadata.METADATA_KEY_DURATION, source.getLong(MediaMetadata.METADATA_KEY_DURATION))
+        builder.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, artwork)
+        builder.putBitmap(MediaMetadata.METADATA_KEY_ART, artwork)
+
+        session.setMetadata(builder.build())
     }
 
-    /**
-     * Méthode appelée par le NotificationListener dès que Deezer change de morceau
-     */
-    fun updateMetadata(title: String?, artist: String?, bitmap: Bitmap?) {
-        // 1. Met à jour les métadonnées affichées sur l'écran de la voiture
-        val metadataBuilder = MediaMetadataCompat.Builder()
-            .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title ?: "Taycan Couleur")
-            .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist ?: "Deezer Proxy")
+    private fun makeColorArtwork(width: Int, height: Int): Bitmap {
+        val prefs = getSharedPreferences("taycan_couleur", MODE_PRIVATE)
+        val c1 = prefs.getString("color1", "#FF3DBB")!!
+        val c2 = prefs.getString("color2", "#8A2BE2")!!
+        return makeGradientBitmap(width, height, c1, c2)
+    }
 
-        if (bitmap != null) {
-            metadataBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, bitmap)
-            
-            // 2. Extraction automatique de la couleur dominante via Palette
-            Palette.from(bitmap).generate { palette ->
-                val dominantColor = palette?.getDominantColor(Color.BLUE) ?: Color.BLUE
-                applyAmbientColor(dominantColor)
+    private fun makeGradientBitmap(width: Int, height: Int, c1: String, c2: String): Bitmap {
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        val paint = android.graphics.Paint()
+
+        val gradient = android.graphics.LinearGradient(
+            0f, 0f, width.toFloat(), height.toFloat(),
+            Color.parseColor(c1), Color.parseColor(c2),
+            android.graphics.Shader.TileMode.CLAMP
+        )
+        paint.shader = gradient
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+
+        return bitmap
+    }
+
+    override fun onGetRoot(
+        clientPackageName: String,
+        clientUid: Int,
+        rootHints: Bundle?
+    ): BrowserRoot {
+        val extras = Bundle()
+        extras.putBoolean("android.media.browse.CONTENT_STYLE_SUPPORTED", true)
+        extras.putInt("android.media.browse.CONTENT_STYLE_BROWSABLE_HINT", 2)
+        extras.putInt("android.media.browse.CONTENT_STYLE_PLAYABLE_HINT", 2)
+        return BrowserRoot("root", extras)
+    }
+
+    override fun onLoadChildren(
+        parentId: String,
+        result: Result<MutableList<MediaBrowser.MediaItem>>
+    ) {
+        val items = mutableListOf<MediaBrowser.MediaItem>()
+
+        if (parentId == "root") {
+            val sample = families[0].tones[3]
+            val icon = makeGradientBitmap(200, 200, sample.c1, sample.c2)
+            val desc = MediaDescription.Builder()
+                .setMediaId("tab_colors")
+                .setTitle("Couleurs")
+                .setIconBitmap(icon)
+                .build()
+            items.add(MediaBrowser.MediaItem(desc, MediaBrowser.MediaItem.FLAG_BROWSABLE))
+        } else if (parentId == "tab_colors") {
+            val randomIcon = makeGradientBitmap(200, 200, "#00FFFF", "#FF00CC")
+            val randomDesc = MediaDescription.Builder()
+                .setMediaId("random")
+                .setTitle("Aléatoire")
+                .setIconBitmap(randomIcon)
+                .build()
+            items.add(MediaBrowser.MediaItem(randomDesc, MediaBrowser.MediaItem.FLAG_PLAYABLE))
+
+            families.forEachIndexed { index, family ->
+                val sample = family.tones[minOf(3, family.tones.size - 1)]
+                val icon = makeGradientBitmap(200, 200, sample.c1, sample.c2)
+                val desc = MediaDescription.Builder()
+                    .setMediaId("fam_$index")
+                    .setTitle(family.name)
+                    .setIconBitmap(icon)
+                    .build()
+                items.add(MediaBrowser.MediaItem(desc, MediaBrowser.MediaItem.FLAG_BROWSABLE))
+            }
+        } else if (parentId.startsWith("fam_")) {
+            val familyIndex = parentId.removePrefix("fam_").toIntOrNull()
+            val family = if (familyIndex != null) families.getOrNull(familyIndex) else null
+            if (family != null) {
+                family.tones.forEachIndexed { toneIndex, tone ->
+                    val icon = makeGradientBitmap(200, 200, tone.c1, tone.c2)
+                    val desc = MediaDescription.Builder()
+                        .setMediaId("col_${familyIndex}_$toneIndex")
+                        .setTitle(tone.name)
+                        .setIconBitmap(icon)
+                        .build()
+                    items.add(MediaBrowser.MediaItem(desc, MediaBrowser.MediaItem.FLAG_PLAYABLE))
+                }
             }
         }
 
-        mediaSession.setMetadata(metadataBuilder.build())
-    }
-
-    private fun applyAmbientColor(colorInt: Int) {
-        val red = Color.red(colorInt)
-        val green = Color.green(colorInt)
-        val blue = Color.blue(colorInt)
-        
-        // C'est ici que tu envoies tes valeurs RGB vers ton bus / module d'éclairage d'ambiance
-        // ex: Log.d("TaycanColor", "Couleur synchronisée : R=$red, G=$green, B=$blue")
+        result.sendResult(items)
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        currentCallback?.let { currentController?.unregisterCallback(it) }
+        try {
+            val am = getSystemService(AUDIO_SERVICE) as AudioManager
+            am.abandonAudioFocus(audioFocusListener)
+        } catch (_: Exception) {}
+        session.release()
         instance = null
-        mediaSession.release()
     }
 }
