@@ -5,9 +5,9 @@
 
     <application
         android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@android:drawable/sym_def_app_icon"
         android:label="Taycan Couleur"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:roundIcon="@android:drawable/sym_def_app_icon"
         android:supportsRtl="true"
         android:theme="@style/Theme.AppCompat.Light.NoActionBar">
 
@@ -21,7 +21,7 @@
             </intent-filter>
         </service>
 
-        <!-- 2. Listener Deezer (nommé NotificationListener pour correspondre à ton MainActivity) -->
+        <!-- 2. Listener Deezer -->
         <service
             android:name=".NotificationListener"
             android:exported="true"
