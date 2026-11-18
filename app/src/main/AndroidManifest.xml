@@ -11,6 +11,16 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.AppCompat.Light.NoActionBar">
 
+        <!-- L'interface principale (visible dans le tiroir d'applications) -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
         <!-- 1. Service maître compatible Android Auto -->
         <service
             android:name=".ColorProxyService"
@@ -22,7 +32,7 @@
         </service>
 
         <!-- 2. Listener Deezer -->
-                <service
+        <service
             android:name=".DeezerNotificationListener"
             android:exported="true"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
