@@ -28,7 +28,8 @@ class ColorProxyService : MediaBrowserService() {
     private var currentController: MediaController? = null
     private var currentCallback: MediaController.Callback? = null
 
-    private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { change ->
+    private val audioFocusListener: AudioManager.OnAudioFocusChangeListener =
+    AudioManager.OnAudioFocusChangeListener { change ->
         if (change == AudioManager.AUDIOFOCUS_LOSS ||
             change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
         ) {
