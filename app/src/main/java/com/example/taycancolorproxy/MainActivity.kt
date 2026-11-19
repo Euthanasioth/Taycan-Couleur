@@ -57,7 +57,11 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(button)
 
-        // === NOUVEAU : démarrer / arrêter le proxy ===
+        // === Déclaration de diagText AVANT les boutons qui l'utilisent ===
+        val diagText = TextView(this)
+        diagText.textSize = 12f
+
+        // === Démarrer / arrêter le proxy ===
         val startProxyBtn = Button(this)
         startProxyBtn.text = "▶ Démarrer le proxy"
         startProxyBtn.setOnClickListener {
@@ -86,12 +90,10 @@ class MainActivity : AppCompatActivity() {
             }
         }
         layout.addView(stopProxyBtn)
-        // === FIN NOUVEAU ===
 
+        // === Diagnostic des sessions média ===
         val diagButton = Button(this)
         diagButton.text = "Voir les sessions média actives"
-        val diagText = TextView(this)
-        diagText.textSize = 12f
         diagButton.setOnClickListener {
             try {
                 val manager = getSystemService(MEDIA_SESSION_SERVICE) as MediaSessionManager
