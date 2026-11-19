@@ -32,6 +32,26 @@ class ColorProxyService : MediaBrowserService() {
     private var currentCallback: MediaController.Callback? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    /**
+     * Rafraîchit périodiquement le PlaybackState pour réinitialiser
+     * le timer interne ACTIVE_BUFFER d'Android (30 secondes).
+     * Sans ça, la session est retirée de la pile après 30s et Deezer reprend l'affichage.
+     */
+    private val refreshSessionRunnable = object : Runnable {
+        override fun run() {
+            try {
+                val currentState = currentController?.playbackState?.state
+                    ?: PlaybackState.STATE_PAUSED
+                val position = currentController?.playbackState?.position ?: 0L
+                session.setPlaybackState(buildState(currentState, position))
+                session.isActive = true
+            } catch (_: Exception) {
+            }
+            // Re-programme dans 10 secondes
+            mainHandler.postDelayed(this, 10_000L)
+        }
+    }
+
     companion object {
         private const val NOTIF_ID = 1001
         private const val CHANNEL_ID = "taycan_proxy"
@@ -121,6 +141,10 @@ class ColorProxyService : MediaBrowserService() {
         }
         findDeezerNow()
         updateNotification()
+
+        // Démarre le rafraîchissement périodique (anti-timeout 30s)
+        mainHandler.removeCallbacks(refreshSessionRunnable)
+        mainHandler.postDelayed(refreshSessionRunnable, 10_000L)
     }
 
     /**
@@ -143,13 +167,8 @@ class ColorProxyService : MediaBrowserService() {
     private fun installSessionCallback() {
         session.setCallback(object : MediaSession.Callback() {
             override fun onPlay() {
-                // 1. On se déclare PLAYING en rafale AVANT
                 forcePlayingBurst()
-
-                // 2. On transmet le Play à Deezer
                 ensureController()?.transportControls?.play()
-
-                // 3. On re-force PLAYING en rafale APRÈS
                 forcePlayingBurst()
             }
 
@@ -158,7 +177,6 @@ class ColorProxyService : MediaBrowserService() {
             }
 
             override fun onSkipToNext() {
-                // Même logique que Play : rafale avant, transmission, rafale après
                 forcePlayingBurst()
                 ensureController()?.transportControls?.skipToNext()
                 forcePlayingBurst()
@@ -282,6 +300,7 @@ class ColorProxyService : MediaBrowserService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Logger.log("onStartCommand appelé (action=${intent?.action})")
         if (intent?.action == ACTION_MEDIA_BUTTON) {
             val action = intent.getLongExtra(EXTRA_MEDIA_ACTION, -1L)
             when (action) {
@@ -303,7 +322,14 @@ class ColorProxyService : MediaBrowserService() {
                 }
             }
         }
-        return super.onStartCommand(intent, flags, startId)
+        // START_STICKY : Android relance le service s'il le tue
+        return START_STICKY
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        Logger.log("onTaskRemoved : l'utilisateur a fermé la tâche de l'app")
+        super.onTaskRemoved(rootIntent)
+        // On laisse le service tourner : ne rien faire ici
     }
 
     private fun findDeezerNow() {
@@ -351,7 +377,6 @@ class ColorProxyService : MediaBrowserService() {
         val callback = object : MediaController.Callback() {
             override fun onMetadataChanged(metadata: MediaMetadata?) {
                 updateMetadata(metadata)
-                // Si Deezer change de piste, on re-force notre priorité
                 forcePlayingBurst()
             }
             override fun onPlaybackStateChanged(state: PlaybackState?) {
@@ -359,12 +384,10 @@ class ColorProxyService : MediaBrowserService() {
 
                 if (deezerState == PlaybackState.STATE_PLAYING ||
                     deezerState == PlaybackState.STATE_BUFFERING) {
-                    // Deezer joue → on miroite ET on re-force PLAYING en rafale
                     session.setPlaybackState(buildState(deezerState, state?.position ?: 0))
                     session.isActive = true
                     forcePlayingBurst()
                 } else {
-                    // Deezer est en pause/arrêt → on miroite normalement
                     session.setPlaybackState(buildState(deezerState, state?.position ?: 0))
                     session.isActive = true
                 }
@@ -506,6 +529,7 @@ class ColorProxyService : MediaBrowserService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        mainHandler.removeCallbacks(refreshSessionRunnable)
         currentCallback?.let { currentController?.unregisterCallback(it) }
         session.release()
         instance = null
