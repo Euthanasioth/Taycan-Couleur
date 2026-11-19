@@ -217,43 +217,43 @@ class ColorProxyService : MediaBrowserService() {
             .setOngoing(true)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
 
-        // MediaStyle (API 21+) : affiche les contrôles play/pause/next/prev
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-            val style = Notification.MediaStyle()
-                .setMediaSession(session.sessionToken)
-                .setShowActionsInCompactView(0, 1, 2)
-            builder.setStyle(style)
+        // MediaStyle : affiche les contrôles play/pause/next/prev
+        val style = Notification.MediaStyle()
+            .setMediaSession(session.sessionToken)
+            .setShowActionsInCompactView(0, 1, 2)
+        builder.setStyle(style)
 
-            // Action précédent
-            builder.addAction(
-                Notification.Action.Builder(
-                    android.graphics.drawable.Icon.createWithResource(this, android.R.drawable.ic_media_previous),
-                    "Précédent",
-                    mediaActionPending(PlaybackState.ACTION_SKIP_TO_PREVIOUS)
-                ).build()
-            )
-            // Action play/pause (toggle selon l'état)
-            val isPlaying = session.playbackState?.state == PlaybackState.STATE_PLAYING
-            builder.addAction(
-                Notification.Action.Builder(
-                    android.graphics.drawable.Icon.createWithResource(
-                        this,
-                        if (isPlaying) android.R.drawable.ic_media_pause
-                        else android.R.drawable.ic_media_play
-                    ),
-                    if (isPlaying) "Pause" else "Lecture",
-                    mediaActionPending(if (isPlaying) PlaybackState.ACTION_PAUSE else PlaybackState.ACTION_PLAY)
-                ).build()
-            )
-            // Action suivant
-            builder.addAction(
-                Notification.Action.Builder(
-                    android.graphics.drawable.Icon.createWithResource(this, android.R.drawable.ic_media_next),
-                    "Suivant",
-                    mediaActionPending(PlaybackState.ACTION_SKIP_TO_NEXT)
-                ).build()
-            )
-        }
+        // Action précédent
+        builder.addAction(
+            Notification.Action.Builder(
+                android.graphics.drawable.Icon.createWithResource(this, android.R.drawable.ic_media_previous),
+                "Précédent",
+                mediaActionPending(PlaybackState.ACTION_SKIP_TO_PREVIOUS)
+            ).build()
+        )
+
+        // Action play/pause (toggle selon l'état de Deezer)
+        val isPlaying = currentController?.playbackState?.state == PlaybackState.STATE_PLAYING
+        builder.addAction(
+            Notification.Action.Builder(
+                android.graphics.drawable.Icon.createWithResource(
+                    this,
+                    if (isPlaying) android.R.drawable.ic_media_pause
+                    else android.R.drawable.ic_media_play
+                ),
+                if (isPlaying) "Pause" else "Lecture",
+                mediaActionPending(if (isPlaying) PlaybackState.ACTION_PAUSE else PlaybackState.ACTION_PLAY)
+            ).build()
+        )
+
+        // Action suivant
+        builder.addAction(
+            Notification.Action.Builder(
+                android.graphics.drawable.Icon.createWithResource(this, android.R.drawable.ic_media_next),
+                "Suivant",
+                mediaActionPending(PlaybackState.ACTION_SKIP_TO_NEXT)
+            ).build()
+        )
 
         return builder.build()
     }
