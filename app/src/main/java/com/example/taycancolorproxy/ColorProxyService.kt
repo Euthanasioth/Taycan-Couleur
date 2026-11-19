@@ -9,6 +9,9 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
 import android.media.MediaDescription
 import android.media.MediaMetadata
 import android.media.browse.MediaBrowser
@@ -28,6 +31,9 @@ class ColorProxyService : MediaBrowserService() {
     private var lastSourceMetadata: MediaMetadata? = null
     private var currentController: MediaController? = null
     private var currentCallback: MediaController.Callback? = null
+
+    // Piste silencieuse en USAGE_ASSISTANCE_SONIFICATION (canal système séparé)
+    private var silentAudioTrack: AudioTrack? = null
 
     companion object {
         private const val NOTIF_ID = 1001
@@ -108,10 +114,12 @@ class ColorProxyService : MediaBrowserService() {
         sessionToken = session.sessionToken
         session.isActive = true
 
-        // Callback initial : gère play/pause en réessayant d'attacher Deezer
         installSessionCallback()
 
         session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, 0))
+
+        // Piste silencieuse sur canal système séparé (pas de focus audio demandé)
+        startSilentTrackAssistance()
 
         pendingController?.let {
             attach(it)
@@ -122,45 +130,84 @@ class ColorProxyService : MediaBrowserService() {
     }
 
     /**
-     * Installe un callback qui forwarde vers currentController s'il existe,
-     * et sinon tente de retrouver Deezer puis forwarde.
+     * Piste silencieuse en USAGE_ASSISTANCE_SONIFICATION.
+     * Canal SYSTÈME séparé du canal MEDIA de Deezer → pas de conflit de focus.
+     * Volume à 0 → aucun son émis.
      */
+    private fun startSilentTrackAssistance() {
+        try {
+            val attrs = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+
+            val sampleRate = 44100
+            val bufferSize = AudioTrack.getMinBufferSize(
+                sampleRate,
+                AudioFormat.CHANNEL_OUT_MONO,
+                AudioFormat.ENCODING_PCM_16BIT
+            ).coerceAtLeast(4096)
+
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(attrs)
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(sampleRate)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build()
+                )
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .setBufferSizeInBytes(bufferSize)
+                .build()
+
+            // Volume à 0 : aucun son émis
+            track.setVolume(0f)
+
+            val silence = ShortArray(bufferSize / 2)
+            track.write(silence, 0, silence.size)
+            track.setLoopPoints(0, silence.size, -1)
+            track.play()
+
+            silentAudioTrack = track
+        } catch (e: Exception) {
+            Logger.log("Erreur startSilentTrackAssistance : ${e.message}")
+        }
+    }
+
+    private fun stopSilentTrack() {
+        try {
+            silentAudioTrack?.stop()
+            silentAudioTrack?.release()
+        } catch (_: Exception) {
+        } finally {
+            silentAudioTrack = null
+        }
+    }
+
     private fun installSessionCallback() {
         session.setCallback(object : MediaSession.Callback() {
             override fun onPlay() {
-                val controller = ensureController()
-                controller?.transportControls?.play()
+                ensureController()?.transportControls?.play()
             }
-
             override fun onPause() {
-                val controller = ensureController()
-                controller?.transportControls?.pause()
+                ensureController()?.transportControls?.pause()
             }
-
             override fun onSkipToNext() {
-                val controller = ensureController()
-                controller?.transportControls?.skipToNext()
+                ensureController()?.transportControls?.skipToNext()
             }
-
             override fun onSkipToPrevious() {
-                val controller = ensureController()
-                controller?.transportControls?.skipToPrevious()
+                ensureController()?.transportControls?.skipToPrevious()
             }
-
             override fun onStop() {
-                val controller = ensureController()
-                controller?.transportControls?.stop()
+                ensureController()?.transportControls?.stop()
             }
-
             override fun onPlayFromMediaId(mediaId: String, extras: Bundle?) {
                 selectColor(mediaId)
             }
         })
     }
 
-    /**
-     * Retourne currentController s'il est valide, sinon tente de retrouver Deezer.
-     */
     private fun ensureController(): MediaController? {
         val c = currentController
         if (c != null) return c
@@ -178,10 +225,9 @@ class ColorProxyService : MediaBrowserService() {
             )
             nm.createNotificationChannel(channel)
 
-            val notif = buildMediaNotification()
             startForeground(
                 NOTIF_ID,
-                notif,
+                buildMediaNotification(),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
             )
         } catch (e: Exception) {
@@ -189,10 +235,6 @@ class ColorProxyService : MediaBrowserService() {
         }
     }
 
-    /**
-     * Met à jour la notification pour refléter l'état actuel.
-     * MediaStyle affiche les boutons play/pause/next/prev sur la notification.
-     */
     private fun updateNotification() {
         try {
             val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
@@ -217,13 +259,11 @@ class ColorProxyService : MediaBrowserService() {
             .setOngoing(true)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
 
-        // MediaStyle : affiche les contrôles play/pause/next/prev
         val style = Notification.MediaStyle()
             .setMediaSession(session.sessionToken)
             .setShowActionsInCompactView(0, 1, 2)
         builder.setStyle(style)
 
-        // Action précédent
         builder.addAction(
             Notification.Action.Builder(
                 android.graphics.drawable.Icon.createWithResource(this, android.R.drawable.ic_media_previous),
@@ -232,7 +272,7 @@ class ColorProxyService : MediaBrowserService() {
             ).build()
         )
 
-        // Action play/pause (toggle selon l'état de Deezer)
+        // isPlaying basé sur l'état réel de Deezer (currentController)
         val isPlaying = currentController?.playbackState?.state == PlaybackState.STATE_PLAYING
         builder.addAction(
             Notification.Action.Builder(
@@ -246,7 +286,6 @@ class ColorProxyService : MediaBrowserService() {
             ).build()
         )
 
-        // Action suivant
         builder.addAction(
             Notification.Action.Builder(
                 android.graphics.drawable.Icon.createWithResource(this, android.R.drawable.ic_media_next),
@@ -477,6 +516,7 @@ class ColorProxyService : MediaBrowserService() {
     override fun onDestroy() {
         super.onDestroy()
         currentCallback?.let { currentController?.unregisterCallback(it) }
+        stopSilentTrack()
         session.release()
         instance = null
     }
