@@ -17,6 +17,8 @@ import android.media.session.MediaSession
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.service.media.MediaBrowserService
 
 class Tone(val name: String, val c1: String, val c2: String)
@@ -28,9 +30,7 @@ class ColorProxyService : MediaBrowserService() {
     private var lastSourceMetadata: MediaMetadata? = null
     private var currentController: MediaController? = null
     private var currentCallback: MediaController.Callback? = null
-
-    // VolumeProvider Java (contourne le problème Kotlin avec les méthodes abstraites)
-    private val fakeRemoteVolume = RemoteVolumeProvider()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     companion object {
         private const val NOTIF_ID = 1001
@@ -111,10 +111,6 @@ class ColorProxyService : MediaBrowserService() {
         sessionToken = session.sessionToken
         session.isActive = true
 
-        // *** CLÉ DE L'APPROCHE ***
-        // Lecture "distante" → pas de focus audio local demandé.
-        session.setPlaybackToRemote(fakeRemoteVolume)
-
         installSessionCallback()
 
         session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, 0))
@@ -127,23 +123,57 @@ class ColorProxyService : MediaBrowserService() {
         updateNotification()
     }
 
+    /**
+     * Envoie 4 impulsions PLAYING à 0, 50, 150, 300 ms pour maximiser
+     * nos chances de rester la session la plus "récente" aux yeux d'Android Auto.
+     */
+    private fun forcePlayingBurst() {
+        val offsets = longArrayOf(0L, 50L, 150L, 300L)
+        for (delay in offsets) {
+            mainHandler.postDelayed({
+                try {
+                    session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, 0))
+                    session.isActive = true
+                } catch (_: Exception) {
+                }
+            }, delay)
+        }
+    }
+
     private fun installSessionCallback() {
         session.setCallback(object : MediaSession.Callback() {
             override fun onPlay() {
+                // 1. On se déclare PLAYING en rafale AVANT
+                forcePlayingBurst()
+
+                // 2. On transmet le Play à Deezer
                 ensureController()?.transportControls?.play()
+
+                // 3. On re-force PLAYING en rafale APRÈS
+                forcePlayingBurst()
             }
+
             override fun onPause() {
                 ensureController()?.transportControls?.pause()
             }
+
             override fun onSkipToNext() {
+                // Même logique que Play : rafale avant, transmission, rafale après
+                forcePlayingBurst()
                 ensureController()?.transportControls?.skipToNext()
+                forcePlayingBurst()
             }
+
             override fun onSkipToPrevious() {
+                forcePlayingBurst()
                 ensureController()?.transportControls?.skipToPrevious()
+                forcePlayingBurst()
             }
+
             override fun onStop() {
                 ensureController()?.transportControls?.stop()
             }
+
             override fun onPlayFromMediaId(mediaId: String, extras: Bundle?) {
                 selectColor(mediaId)
             }
@@ -255,10 +285,22 @@ class ColorProxyService : MediaBrowserService() {
         if (intent?.action == ACTION_MEDIA_BUTTON) {
             val action = intent.getLongExtra(EXTRA_MEDIA_ACTION, -1L)
             when (action) {
-                PlaybackState.ACTION_PLAY -> ensureController()?.transportControls?.play()
+                PlaybackState.ACTION_PLAY -> {
+                    forcePlayingBurst()
+                    ensureController()?.transportControls?.play()
+                    forcePlayingBurst()
+                }
                 PlaybackState.ACTION_PAUSE -> ensureController()?.transportControls?.pause()
-                PlaybackState.ACTION_SKIP_TO_NEXT -> ensureController()?.transportControls?.skipToNext()
-                PlaybackState.ACTION_SKIP_TO_PREVIOUS -> ensureController()?.transportControls?.skipToPrevious()
+                PlaybackState.ACTION_SKIP_TO_NEXT -> {
+                    forcePlayingBurst()
+                    ensureController()?.transportControls?.skipToNext()
+                    forcePlayingBurst()
+                }
+                PlaybackState.ACTION_SKIP_TO_PREVIOUS -> {
+                    forcePlayingBurst()
+                    ensureController()?.transportControls?.skipToPrevious()
+                    forcePlayingBurst()
+                }
             }
         }
         return super.onStartCommand(intent, flags, startId)
@@ -309,15 +351,23 @@ class ColorProxyService : MediaBrowserService() {
         val callback = object : MediaController.Callback() {
             override fun onMetadataChanged(metadata: MediaMetadata?) {
                 updateMetadata(metadata)
+                // Si Deezer change de piste, on re-force notre priorité
+                forcePlayingBurst()
             }
             override fun onPlaybackStateChanged(state: PlaybackState?) {
-                session.setPlaybackState(
-                    buildState(
-                        state?.state ?: PlaybackState.STATE_PAUSED,
-                        state?.position ?: 0
-                    )
-                )
-                session.isActive = true
+                val deezerState = state?.state ?: PlaybackState.STATE_PAUSED
+
+                if (deezerState == PlaybackState.STATE_PLAYING ||
+                    deezerState == PlaybackState.STATE_BUFFERING) {
+                    // Deezer joue → on miroite ET on re-force PLAYING en rafale
+                    session.setPlaybackState(buildState(deezerState, state?.position ?: 0))
+                    session.isActive = true
+                    forcePlayingBurst()
+                } else {
+                    // Deezer est en pause/arrêt → on miroite normalement
+                    session.setPlaybackState(buildState(deezerState, state?.position ?: 0))
+                    session.isActive = true
+                }
                 updateNotification()
             }
         }
