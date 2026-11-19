@@ -7,6 +7,10 @@ import android.content.ComponentName
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioTrack
 import android.media.MediaDescription
 import android.media.MediaMetadata
 import android.media.browse.MediaBrowser
@@ -26,6 +30,9 @@ class ColorProxyService : MediaBrowserService() {
     private var lastSourceMetadata: MediaMetadata? = null
     private var currentController: MediaController? = null
     private var currentCallback: MediaController.Callback? = null
+    
+    // Piste silencieuse pour maintenir la session active sans prendre le focus
+    private var silentAudioTrack: AudioTrack? = null
 
     companion object {
         private const val NOTIF_ID = 1001
@@ -114,11 +121,70 @@ class ColorProxyService : MediaBrowserService() {
 
         session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, 0))
 
+        // Démarre la piste silencieuse
+        startSilentTrack()
+
         pendingController?.let {
             attach(it)
             pendingController = null
         }
         findDeezerNow()
+    }
+
+    /**
+     * Joue une piste audio silencieuse en boucle.
+     * Le but est de maintenir une session média active SANS demander le focus audio,
+     * afin de ne pas interrompre Deezer.
+     */
+    private fun startSilentTrack() {
+        try {
+            val sampleRate = 44100
+            val bufferSize = AudioTrack.getMinBufferSize(
+                sampleRate,
+                AudioFormat.CHANNEL_OUT_MONO,
+                AudioFormat.ENCODING_PCM_16BIT
+            ).coerceAtLeast(4096)
+
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(sampleRate)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build()
+                )
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .setBufferSizeInBytes(bufferSize)
+                .build()
+
+            // Remplit le buffer de zéros (silence)
+            val silence = ShortArray(bufferSize / 2) // 16-bit
+            track.write(silence, 0, silence.size)
+
+            // Loop à l'infini
+            track.setLoopPoints(0, silence.size, -1)
+            track.play()
+
+            silentAudioTrack = track
+        } catch (e: Exception) {
+            Logger.log("Erreur startSilentTrack : ${e.message}")
+        }
+    }
+
+    private fun stopSilentTrack() {
+        try {
+            silentAudioTrack?.stop()
+            silentAudioTrack?.release()
+        } catch (_: Exception) {
+        } finally {
+            silentAudioTrack = null
+        }
     }
 
     private fun startAsForeground() {
@@ -350,6 +416,7 @@ class ColorProxyService : MediaBrowserService() {
     override fun onDestroy() {
         super.onDestroy()
         currentCallback?.let { currentController?.unregisterCallback(it) }
+        stopSilentTrack()
         session.release()
         instance = null
     }
