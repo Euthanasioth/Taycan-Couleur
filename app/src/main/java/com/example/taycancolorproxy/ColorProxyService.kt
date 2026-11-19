@@ -34,17 +34,11 @@ class ColorProxyService : MediaBrowserService() {
      * VolumeProvider factice : simule une lecture "distante" (type Cast).
      * Le MediaSession ne demande donc AUCUN focus audio local.
      * Deezer peut jouer son audio sans être interrompu.
+     * On n'override pas les callbacks : le comportement par défaut est de ne rien faire.
      */
-    private val fakeRemoteVolume = object : VolumeProvider(
+    private val fakeRemoteVolume = VolumeProvider(
         VolumeProvider.VOLUME_CONTROL_ABSOLUTE, 100, 50
-    ) {
-        override fun onSetVolume(volume: Int) {
-            // Rien à faire : le volume est fictif
-        }
-        override fun onAdjustVolume(direction: Int) {
-            // Rien à faire
-        }
-    }
+    )
 
     companion object {
         private const val NOTIF_ID = 1001
@@ -126,8 +120,7 @@ class ColorProxyService : MediaBrowserService() {
         session.isActive = true
 
         // *** CLÉ DE L'APPROCHE ***
-        // Déclare que la lecture est "distante" (comme Cast).
-        // Aucun focus audio local n'est demandé → Deezer joue sans être coupé.
+        // Déclare une lecture "distante" (comme Cast). Aucun focus audio local demandé.
         session.setPlaybackToRemote(fakeRemoteVolume)
 
         installSessionCallback()
