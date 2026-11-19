@@ -26,7 +26,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Demande de permission POST_NOTIFICATIONS (Android 13+)
+        // Permission POST_NOTIFICATIONS (Android 13+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED
@@ -46,7 +46,7 @@ class MainActivity : AppCompatActivity() {
         layout.setPadding(40, 100, 40, 40)
 
         val text = TextView(this)
-        text.text = "Taycan Couleur\n\nÉtape 1 : autorise l'accès aux notifications ci-dessous.\nÉtape 2 : choisis une couleur.\nÉtape 3 : lance Deezer et sélectionne \"Taycan Couleur\" dans Android Auto."
+        text.text = "Taycan Couleur\n\nÉtape 1 : autorise l'accès aux notifications ci-dessous.\nÉtape 2 : démarre le proxy.\nÉtape 3 : choisis une couleur.\nÉtape 4 : lance Deezer et sélectionne \"Taycan Couleur\" dans Android Auto (ou une app proxy sur ton téléphone)."
         text.textSize = 16f
         layout.addView(text)
 
@@ -57,6 +57,37 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(button)
 
+        // === NOUVEAU : démarrer / arrêter le proxy ===
+        val startProxyBtn = Button(this)
+        startProxyBtn.text = "▶ Démarrer le proxy"
+        startProxyBtn.setOnClickListener {
+            try {
+                val intent = Intent(this, ColorProxyService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(intent)
+                } else {
+                    startService(intent)
+                }
+                diagText.text = "Proxy démarré ✓"
+            } catch (e: Exception) {
+                diagText.text = "Erreur démarrage : ${e.message}"
+            }
+        }
+        layout.addView(startProxyBtn)
+
+        val stopProxyBtn = Button(this)
+        stopProxyBtn.text = "⏹ Arrêter le proxy"
+        stopProxyBtn.setOnClickListener {
+            try {
+                stopService(Intent(this, ColorProxyService::class.java))
+                diagText.text = "Proxy arrêté"
+            } catch (e: Exception) {
+                diagText.text = "Erreur arrêt : ${e.message}"
+            }
+        }
+        layout.addView(stopProxyBtn)
+        // === FIN NOUVEAU ===
+
         val diagButton = Button(this)
         diagButton.text = "Voir les sessions média actives"
         val diagText = TextView(this)
@@ -64,7 +95,6 @@ class MainActivity : AppCompatActivity() {
         diagButton.setOnClickListener {
             try {
                 val manager = getSystemService(MEDIA_SESSION_SERVICE) as MediaSessionManager
-                // Correction : NotificationListener, pas DeezerNotificationListener
                 val component = ComponentName(this, NotificationListener::class.java)
                 val sessions = manager.getActiveSessions(component)
                 val sb = StringBuilder()
