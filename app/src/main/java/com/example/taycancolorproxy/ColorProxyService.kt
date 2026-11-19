@@ -9,11 +9,9 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.media.AudioAttributes
-import android.media.AudioFormat
-import android.media.AudioTrack
 import android.media.MediaDescription
 import android.media.MediaMetadata
+import android.media.VolumeProvider
 import android.media.browse.MediaBrowser
 import android.media.session.MediaController
 import android.media.session.MediaSession
@@ -32,8 +30,21 @@ class ColorProxyService : MediaBrowserService() {
     private var currentController: MediaController? = null
     private var currentCallback: MediaController.Callback? = null
 
-    // Piste silencieuse en USAGE_ASSISTANCE_SONIFICATION (canal système séparé)
-    private var silentAudioTrack: AudioTrack? = null
+    /**
+     * VolumeProvider factice : simule une lecture "distante" (type Cast).
+     * Le MediaSession ne demande donc AUCUN focus audio local.
+     * Deezer peut jouer son audio sans être interrompu.
+     */
+    private val fakeRemoteVolume = object : VolumeProvider(
+        VolumeProvider.VOLUME_CONTROL_ABSOLUTE, 100, 50
+    ) {
+        override fun onSetVolume(volume: Int) {
+            // Rien à faire : le volume est fictif
+        }
+        override fun onAdjustVolume(direction: Int) {
+            // Rien à faire
+        }
+    }
 
     companion object {
         private const val NOTIF_ID = 1001
@@ -114,12 +125,14 @@ class ColorProxyService : MediaBrowserService() {
         sessionToken = session.sessionToken
         session.isActive = true
 
+        // *** CLÉ DE L'APPROCHE ***
+        // Déclare que la lecture est "distante" (comme Cast).
+        // Aucun focus audio local n'est demandé → Deezer joue sans être coupé.
+        session.setPlaybackToRemote(fakeRemoteVolume)
+
         installSessionCallback()
 
         session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, 0))
-
-        // Piste silencieuse sur canal système séparé (pas de focus audio demandé)
-        startSilentTrackAssistance()
 
         pendingController?.let {
             attach(it)
@@ -127,62 +140,6 @@ class ColorProxyService : MediaBrowserService() {
         }
         findDeezerNow()
         updateNotification()
-    }
-
-    /**
-     * Piste silencieuse en USAGE_ASSISTANCE_SONIFICATION.
-     * Canal SYSTÈME séparé du canal MEDIA de Deezer → pas de conflit de focus.
-     * Volume à 0 → aucun son émis.
-     */
-    private fun startSilentTrackAssistance() {
-        try {
-            val attrs = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .build()
-
-            val sampleRate = 44100
-            val bufferSize = AudioTrack.getMinBufferSize(
-                sampleRate,
-                AudioFormat.CHANNEL_OUT_MONO,
-                AudioFormat.ENCODING_PCM_16BIT
-            ).coerceAtLeast(4096)
-
-            val track = AudioTrack.Builder()
-                .setAudioAttributes(attrs)
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setSampleRate(sampleRate)
-                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                        .build()
-                )
-                .setTransferMode(AudioTrack.MODE_STATIC)
-                .setBufferSizeInBytes(bufferSize)
-                .build()
-
-            // Volume à 0 : aucun son émis
-            track.setVolume(0f)
-
-            val silence = ShortArray(bufferSize / 2)
-            track.write(silence, 0, silence.size)
-            track.setLoopPoints(0, silence.size, -1)
-            track.play()
-
-            silentAudioTrack = track
-        } catch (e: Exception) {
-            Logger.log("Erreur startSilentTrackAssistance : ${e.message}")
-        }
-    }
-
-    private fun stopSilentTrack() {
-        try {
-            silentAudioTrack?.stop()
-            silentAudioTrack?.release()
-        } catch (_: Exception) {
-        } finally {
-            silentAudioTrack = null
-        }
     }
 
     private fun installSessionCallback() {
@@ -272,7 +229,6 @@ class ColorProxyService : MediaBrowserService() {
             ).build()
         )
 
-        // isPlaying basé sur l'état réel de Deezer (currentController)
         val isPlaying = currentController?.playbackState?.state == PlaybackState.STATE_PLAYING
         builder.addAction(
             Notification.Action.Builder(
@@ -516,7 +472,6 @@ class ColorProxyService : MediaBrowserService() {
     override fun onDestroy() {
         super.onDestroy()
         currentCallback?.let { currentController?.unregisterCallback(it) }
-        stopSilentTrack()
         session.release()
         instance = null
     }
