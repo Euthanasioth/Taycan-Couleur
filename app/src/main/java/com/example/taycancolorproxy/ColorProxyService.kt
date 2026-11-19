@@ -3,13 +3,12 @@ package com.example.taycancolorproxy
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.ComponentName
+import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.media.AudioAttributes
-import android.media.AudioFormat
-import android.media.AudioTrack
 import android.media.MediaDescription
 import android.media.MediaMetadata
 import android.media.browse.MediaBrowser
@@ -29,10 +28,6 @@ class ColorProxyService : MediaBrowserService() {
     private var lastSourceMetadata: MediaMetadata? = null
     private var currentController: MediaController? = null
     private var currentCallback: MediaController.Callback? = null
-
-    // Piste silencieuse en USAGE_ASSISTANCE_SONIFICATION
-    // pour maintenir la session active sans conflit de focus avec Deezer
-    private var silentAudioTrack: AudioTrack? = null
 
     companion object {
         private const val NOTIF_ID = 1001
@@ -113,79 +108,64 @@ class ColorProxyService : MediaBrowserService() {
         sessionToken = session.sessionToken
         session.isActive = true
 
-        session.setCallback(object : MediaSession.Callback() {
-            override fun onPlayFromMediaId(mediaId: String, extras: Bundle?) {
-                selectColor(mediaId)
-            }
-        })
+        // Callback initial : gère play/pause en réessayant d'attacher Deezer
+        installSessionCallback()
 
         session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, 0))
-
-        // Piste silencieuse en flux séparé (pas de focus audio demandé)
-        startSilentTrackAssistance()
 
         pendingController?.let {
             attach(it)
             pendingController = null
         }
         findDeezerNow()
+        updateNotification()
     }
 
     /**
-     * Piste silencieuse en USAGE_ASSISTANCE_SONIFICATION.
-     * Cette catégorie de flux est traitée comme un flux SYSTEME, pas MEDIA.
-     * Elle ne devrait donc pas entrer en conflit de focus avec Deezer (USAGE_MEDIA).
-     * Le volume de la piste est à 0, donc aucun son n'est émis.
+     * Installe un callback qui forwarde vers currentController s'il existe,
+     * et sinon tente de retrouver Deezer puis forwarde.
      */
-    private fun startSilentTrackAssistance() {
-        try {
-            val attrs = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .build()
+    private fun installSessionCallback() {
+        session.setCallback(object : MediaSession.Callback() {
+            override fun onPlay() {
+                val controller = ensureController()
+                controller?.transportControls?.play()
+            }
 
-            val sampleRate = 44100
-            val bufferSize = AudioTrack.getMinBufferSize(
-                sampleRate,
-                AudioFormat.CHANNEL_OUT_MONO,
-                AudioFormat.ENCODING_PCM_16BIT
-            ).coerceAtLeast(4096)
+            override fun onPause() {
+                val controller = ensureController()
+                controller?.transportControls?.pause()
+            }
 
-            val track = AudioTrack.Builder()
-                .setAudioAttributes(attrs)
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setSampleRate(sampleRate)
-                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                        .build()
-                )
-                .setTransferMode(AudioTrack.MODE_STATIC)
-                .setBufferSizeInBytes(bufferSize)
-                .build()
+            override fun onSkipToNext() {
+                val controller = ensureController()
+                controller?.transportControls?.skipToNext()
+            }
 
-            // Volume à 0 : aucun son ne sera émis
-            track.setVolume(0f)
+            override fun onSkipToPrevious() {
+                val controller = ensureController()
+                controller?.transportControls?.skipToPrevious()
+            }
 
-            val silence = ShortArray(bufferSize / 2)
-            track.write(silence, 0, silence.size)
-            track.setLoopPoints(0, silence.size, -1)
-            track.play()
+            override fun onStop() {
+                val controller = ensureController()
+                controller?.transportControls?.stop()
+            }
 
-            silentAudioTrack = track
-        } catch (e: Exception) {
-            Logger.log("Erreur startSilentTrackAssistance : ${e.message}")
-        }
+            override fun onPlayFromMediaId(mediaId: String, extras: Bundle?) {
+                selectColor(mediaId)
+            }
+        })
     }
 
-    private fun stopSilentTrack() {
-        try {
-            silentAudioTrack?.stop()
-            silentAudioTrack?.release()
-        } catch (_: Exception) {
-        } finally {
-            silentAudioTrack = null
-        }
+    /**
+     * Retourne currentController s'il est valide, sinon tente de retrouver Deezer.
+     */
+    private fun ensureController(): MediaController? {
+        val c = currentController
+        if (c != null) return c
+        findDeezerNow()
+        return currentController
     }
 
     private fun startAsForeground() {
@@ -198,13 +178,7 @@ class ColorProxyService : MediaBrowserService() {
             )
             nm.createNotificationChannel(channel)
 
-            val notif: Notification = Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle("Taycan Couleur")
-                .setContentText("Proxy de couleur actif")
-                .setSmallIcon(R.drawable.app_icon)
-                .setOngoing(true)
-                .build()
-
+            val notif = buildMediaNotification()
             startForeground(
                 NOTIF_ID,
                 notif,
@@ -213,6 +187,101 @@ class ColorProxyService : MediaBrowserService() {
         } catch (e: Exception) {
             Logger.log("Erreur startForeground : ${e.message}")
         }
+    }
+
+    /**
+     * Met à jour la notification pour refléter l'état actuel.
+     * MediaStyle affiche les boutons play/pause/next/prev sur la notification.
+     */
+    private fun updateNotification() {
+        try {
+            val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            nm.notify(NOTIF_ID, buildMediaNotification())
+        } catch (e: Exception) {
+            Logger.log("Erreur updateNotification : ${e.message}")
+        }
+    }
+
+    private fun buildMediaNotification(): Notification {
+        val openIntent = Intent(this, MainActivity::class.java)
+        val openPending = PendingIntent.getActivity(
+            this, 0, openIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val builder = Notification.Builder(this, CHANNEL_ID)
+            .setContentTitle("Taycan Couleur")
+            .setContentText("Proxy de couleur actif")
+            .setSmallIcon(R.drawable.app_icon)
+            .setContentIntent(openPending)
+            .setOngoing(true)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+
+        // MediaStyle (API 21+) : affiche les contrôles play/pause/next/prev
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+            val style = Notification.MediaStyle()
+                .setMediaSession(session.sessionToken)
+                .setShowActionsInCompactView(0, 1, 2)
+            builder.setStyle(style)
+
+            // Action précédent
+            builder.addAction(
+                Notification.Action.Builder(
+                    android.graphics.drawable.Icon.createWithResource(this, android.R.drawable.ic_media_previous),
+                    "Précédent",
+                    mediaActionPending(PlaybackState.ACTION_SKIP_TO_PREVIOUS)
+                ).build()
+            )
+            // Action play/pause (toggle selon l'état)
+            val isPlaying = session.playbackState?.state == PlaybackState.STATE_PLAYING
+            builder.addAction(
+                Notification.Action.Builder(
+                    android.graphics.drawable.Icon.createWithResource(
+                        this,
+                        if (isPlaying) android.R.drawable.ic_media_pause
+                        else android.R.drawable.ic_media_play
+                    ),
+                    if (isPlaying) "Pause" else "Lecture",
+                    mediaActionPending(if (isPlaying) PlaybackState.ACTION_PAUSE else PlaybackState.ACTION_PLAY)
+                ).build()
+            )
+            // Action suivant
+            builder.addAction(
+                Notification.Action.Builder(
+                    android.graphics.drawable.Icon.createWithResource(this, android.R.drawable.ic_media_next),
+                    "Suivant",
+                    mediaActionPending(PlaybackState.ACTION_SKIP_TO_NEXT)
+                ).build()
+            )
+        }
+
+        return builder.build()
+    }
+
+    private fun mediaActionPending(action: Long): PendingIntent {
+        val intent = Intent(this, ColorProxyService::class.java).apply {
+            this.action = ACTION_MEDIA_BUTTON
+            putExtra(EXTRA_MEDIA_ACTION, action)
+        }
+        return PendingIntent.getService(
+            this,
+            action.toInt(),
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_MEDIA_BUTTON) {
+            val action = intent.getLongExtra(EXTRA_MEDIA_ACTION, -1L)
+            when (action) {
+                PlaybackState.ACTION_PLAY -> ensureController()?.transportControls?.play()
+                PlaybackState.ACTION_PAUSE -> ensureController()?.transportControls?.pause()
+                PlaybackState.ACTION_SKIP_TO_NEXT -> ensureController()?.transportControls?.skipToNext()
+                PlaybackState.ACTION_SKIP_TO_PREVIOUS -> ensureController()?.transportControls?.skipToPrevious()
+            }
+        }
+        return super.onStartCommand(intent, flags, startId)
     }
 
     private fun findDeezerNow() {
@@ -257,17 +326,6 @@ class ColorProxyService : MediaBrowserService() {
         currentCallback?.let { currentController?.unregisterCallback(it) }
         currentController = sourceController
 
-        session.setCallback(object : MediaSession.Callback() {
-            override fun onPlay() { sourceController.transportControls.play() }
-            override fun onPause() { sourceController.transportControls.pause() }
-            override fun onSkipToNext() { sourceController.transportControls.skipToNext() }
-            override fun onSkipToPrevious() { sourceController.transportControls.skipToPrevious() }
-            override fun onStop() { sourceController.transportControls.stop() }
-            override fun onPlayFromMediaId(mediaId: String, extras: Bundle?) {
-                selectColor(mediaId)
-            }
-        })
-
         val callback = object : MediaController.Callback() {
             override fun onMetadataChanged(metadata: MediaMetadata?) {
                 updateMetadata(metadata)
@@ -280,6 +338,7 @@ class ColorProxyService : MediaBrowserService() {
                     )
                 )
                 session.isActive = true
+                updateNotification()
             }
         }
         sourceController.registerCallback(callback)
@@ -294,6 +353,7 @@ class ColorProxyService : MediaBrowserService() {
             )
         )
         session.isActive = true
+        updateNotification()
     }
 
     private fun buildState(state: Int, position: Long): PlaybackState {
@@ -417,8 +477,10 @@ class ColorProxyService : MediaBrowserService() {
     override fun onDestroy() {
         super.onDestroy()
         currentCallback?.let { currentController?.unregisterCallback(it) }
-        stopSilentTrack()
         session.release()
         instance = null
     }
 }
+
+private const val ACTION_MEDIA_BUTTON = "com.example.taycancolorproxy.MEDIA_BUTTON"
+private const val EXTRA_MEDIA_ACTION = "media_action"
