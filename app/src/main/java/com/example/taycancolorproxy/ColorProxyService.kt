@@ -11,7 +11,6 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.media.MediaDescription
 import android.media.MediaMetadata
-import android.media.VolumeProvider
 import android.media.browse.MediaBrowser
 import android.media.session.MediaController
 import android.media.session.MediaSession
@@ -30,15 +29,8 @@ class ColorProxyService : MediaBrowserService() {
     private var currentController: MediaController? = null
     private var currentCallback: MediaController.Callback? = null
 
-    /**
-     * VolumeProvider factice : simule une lecture "distante" (type Cast).
-     * Le MediaSession ne demande donc AUCUN focus audio local.
-     * Deezer peut jouer son audio sans être interrompu.
-     * On n'override pas les callbacks : le comportement par défaut est de ne rien faire.
-     */
-    private val fakeRemoteVolume = VolumeProvider(
-        VolumeProvider.VOLUME_CONTROL_ABSOLUTE, 100, 50
-    )
+    // VolumeProvider Java (contourne le problème Kotlin avec les méthodes abstraites)
+    private val fakeRemoteVolume = RemoteVolumeProvider()
 
     companion object {
         private const val NOTIF_ID = 1001
@@ -120,7 +112,7 @@ class ColorProxyService : MediaBrowserService() {
         session.isActive = true
 
         // *** CLÉ DE L'APPROCHE ***
-        // Déclare une lecture "distante" (comme Cast). Aucun focus audio local demandé.
+        // Lecture "distante" → pas de focus audio local demandé.
         session.setPlaybackToRemote(fakeRemoteVolume)
 
         installSessionCallback()
