@@ -8,6 +8,7 @@ import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
@@ -30,9 +31,10 @@ class ColorProxyService : MediaBrowserService() {
     private var lastSourceMetadata: MediaMetadata? = null
     private var currentController: MediaController? = null
     private var currentCallback: MediaController.Callback? = null
-    
-    // Piste silencieuse pour maintenir la session active sans prendre le focus
+
+    // Piste silencieuse + focus "duck"
     private var silentAudioTrack: AudioTrack? = null
+    private var focusRequest: AudioFocusRequest? = null
 
     companion object {
         private const val NOTIF_ID = 1001
@@ -121,8 +123,8 @@ class ColorProxyService : MediaBrowserService() {
 
         session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, 0))
 
-        // Démarre la piste silencieuse
-        startSilentTrack()
+        // Focus "duck" + piste silencieuse
+        startSilentTrackWithDuckFocus()
 
         pendingController?.let {
             attach(it)
@@ -132,12 +134,30 @@ class ColorProxyService : MediaBrowserService() {
     }
 
     /**
-     * Joue une piste audio silencieuse en boucle.
-     * Le but est de maintenir une session média active SANS demander le focus audio,
-     * afin de ne pas interrompre Deezer.
+     * Demande le focus en mode TRANSIENT_MAY_DUCK puis joue une piste silencieuse.
+     * - Le focus "duck" abaisse le volume de Deezer au lieu de le couper.
+     * - La piste silencieuse maintient une session média active.
      */
-    private fun startSilentTrack() {
+    private fun startSilentTrackWithDuckFocus() {
         try {
+            val am = getSystemService(AUDIO_SERVICE) as AudioManager
+
+            val attrs = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build()
+
+            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                .setAudioAttributes(attrs)
+                .setOnAudioFocusChangeListener { change ->
+                    Logger.log("Focus audio changé : $change")
+                }
+                .build()
+
+            am.requestAudioFocus(request)
+            focusRequest = request
+
+            // Piste silencieuse en boucle
             val sampleRate = 44100
             val bufferSize = AudioTrack.getMinBufferSize(
                 sampleRate,
@@ -146,12 +166,7 @@ class ColorProxyService : MediaBrowserService() {
             ).coerceAtLeast(4096)
 
             val track = AudioTrack.Builder()
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                        .build()
-                )
+                .setAudioAttributes(attrs)
                 .setAudioFormat(
                     AudioFormat.Builder()
                         .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
@@ -163,27 +178,31 @@ class ColorProxyService : MediaBrowserService() {
                 .setBufferSizeInBytes(bufferSize)
                 .build()
 
-            // Remplit le buffer de zéros (silence)
-            val silence = ShortArray(bufferSize / 2) // 16-bit
+            val silence = ShortArray(bufferSize / 2)
             track.write(silence, 0, silence.size)
-
-            // Loop à l'infini
             track.setLoopPoints(0, silence.size, -1)
             track.play()
 
             silentAudioTrack = track
         } catch (e: Exception) {
-            Logger.log("Erreur startSilentTrack : ${e.message}")
+            Logger.log("Erreur startSilentTrackWithDuckFocus : ${e.message}")
         }
     }
 
-    private fun stopSilentTrack() {
+    private fun stopSilentTrackAndFocus() {
         try {
             silentAudioTrack?.stop()
             silentAudioTrack?.release()
         } catch (_: Exception) {
         } finally {
             silentAudioTrack = null
+        }
+        try {
+            val am = getSystemService(AUDIO_SERVICE) as AudioManager
+            focusRequest?.let { am.abandonAudioFocusRequest(it) }
+        } catch (_: Exception) {
+        } finally {
+            focusRequest = null
         }
     }
 
@@ -416,7 +435,7 @@ class ColorProxyService : MediaBrowserService() {
     override fun onDestroy() {
         super.onDestroy()
         currentCallback?.let { currentController?.unregisterCallback(it) }
-        stopSilentTrack()
+        stopSilentTrackAndFocus()
         session.release()
         instance = null
     }
