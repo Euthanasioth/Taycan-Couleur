@@ -21,9 +21,6 @@
             </intent-filter>
         </activity>
 
-        <!-- Nouvelle page Journal & diagnostics -->
-
-
         <service
             android:name=".NotificationListener"
             android:label="Taycan Couleur Listener"
