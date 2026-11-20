@@ -63,13 +63,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         val text = TextView(this).apply {
-            text = "Taycan Couleur\n\nÉtape 1 : autorise l'accès aux notifications ci-dessous.\nÉtape 2 : démarre le proxy.\nÉtape 3 : choisis une couleur.\nÉtape 4 : lance Deezer et sélectionne \"Taycan Couleur\" dans Android Auto (ou une app proxy sur ton téléphone)."
+            this.text = "Taycan Couleur\n\nÉtape 1 : autorise l'accès aux notifications ci-dessous.\nÉtape 2 : démarre le proxy.\nÉtape 3 : choisis une couleur.\nÉtape 4 : lance Deezer et sélectionne \"Taycan Couleur\" dans Android Auto (ou une app proxy sur ton téléphone)."
             textSize = 16f
         }
         layout.addView(text)
 
         val button = Button(this).apply {
-            text = "Ouvrir les réglages d'accès aux notifications"
+            this.text = "Ouvrir les réglages d'accès aux notifications"
             setOnClickListener {
                 startActivity(
                     Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
@@ -84,7 +84,7 @@ class MainActivity : AppCompatActivity() {
 
         // Démarrer le proxy
         val startProxyBtn = Button(this).apply {
-            text = "▶ Démarrer le proxy"
+            this.text = "▶ Démarrer le proxy"
             setOnClickListener {
                 try {
                     val intent = Intent(
@@ -106,7 +106,7 @@ class MainActivity : AppCompatActivity() {
 
         // Arrêter le proxy
         val stopProxyBtn = Button(this).apply {
-            text = "⏹ Arrêter le proxy"
+            this.text = "⏹ Arrêter le proxy"
             setOnClickListener {
                 try {
                     stopService(
@@ -122,7 +122,7 @@ class MainActivity : AppCompatActivity() {
 
         // Diagnostic des sessions média
         val diagButton = Button(this).apply {
-            text = "Voir les sessions média actives"
+            this.text = "Voir les sessions média actives"
             setOnClickListener {
                 try {
                     val manager =
@@ -155,7 +155,7 @@ class MainActivity : AppCompatActivity() {
 
         // Accès à la page secondaire
         val diagnosticsButton = Button(this).apply {
-            text = "📋 Journal & diagnostics"
+            this.text = "📋 Journal & diagnostics"
             setOnClickListener {
                 startActivity(
                     Intent(this@MainActivity, DiagnosticsActivity::class.java)
@@ -167,7 +167,7 @@ class MainActivity : AppCompatActivity() {
         // Choix des couleurs
         val colorLabel = TextView(this).apply {
             setPadding(0, 60, 0, 20)
-            text = "Choisis ta couleur :"
+            this.text = "Choisis ta couleur :"
             textSize = 16f
         }
         layout.addView(colorLabel)
@@ -197,7 +197,7 @@ class MainActivity : AppCompatActivity() {
 
         for ((name, c1, c2) in colors) {
             val colorButton = Button(this).apply {
-                text = name
+                this.text = name
                 setBackgroundColor(Color.parseColor(c1))
                 setOnClickListener {
                     prefs.edit()
