@@ -22,9 +22,7 @@
         </activity>
 
         <!-- Nouvelle page Journal & diagnostics -->
-        <activity
-            android:name=".DiagnosticsActivity"
-            android:exported="false" />
+
 
         <service
             android:name=".NotificationListener"
