@@ -40,6 +40,27 @@ class MainActivity : AppCompatActivity() {
 
         val prefs: SharedPreferences = getSharedPreferences("taycan_couleur", MODE_PRIVATE)
 
+        // DIAG : pourquoi les derniers processus sont morts ?
+        val exitInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
+                val list = am.getHistoricalProcessExitReasons(packageName, 0, 3)
+                if (list.isEmpty()) {
+                    "Aucune mort de processus enregistrée."
+                } else {
+                    list.joinToString("\n\n") {
+                        val date = java.text.SimpleDateFormat("dd/MM HH:mm:ss", java.util.Locale.FRANCE)
+                            .format(java.util.Date(it.timestamp))
+                        "$date  raison=${it.reason}  importance=${it.importance}\n${it.description ?: ""}"
+                    }
+                }
+            } catch (e: Exception) {
+                "Lecture impossible : ${e.message}"
+            }
+        } else {
+            "Non disponible (Android < 11)"
+        }
+
         val scroll = ScrollView(this)
         val layout = LinearLayout(this)
         layout.orientation = LinearLayout.VERTICAL
@@ -172,6 +193,13 @@ class MainActivity : AppCompatActivity() {
             recreate()
         }
         layout.addView(clearButton)
+
+        // === DIAG : dernières morts du processus ===
+        val exitText = TextView(this)
+        exitText.setPadding(0, 60, 0, 0)
+        exitText.textSize = 12f
+        exitText.text = "DERNIÈRES MORTS DU PROCESSUS :\n\n" + exitInfo
+        layout.addView(exitText)
 
         scroll.addView(layout)
         setContentView(scroll)
