@@ -21,6 +21,10 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".DiagnosticsActivity"
+            android:exported="false" />
+
         <service
             android:name=".NotificationListener"
             android:label="Taycan Couleur Listener"
