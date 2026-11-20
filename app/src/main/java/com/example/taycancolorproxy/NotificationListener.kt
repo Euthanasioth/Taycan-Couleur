@@ -68,7 +68,10 @@ class NotificationListener : NotificationListenerService() {
     }
 
     // Une notification nous intéresse si c'est Deezer ou si elle est de type média
+        // Une notification nous intéresse si c'est Deezer ou si elle est de type média
     private fun estMedia(sbn: StatusBarNotification): Boolean {
+        if (sbn.packageName == packageName) return false   // <- ligne ajoutée : on ignore nos propres notifications
+
         val n = sbn.notification
         val template = n.extras?.getString(Notification.EXTRA_TEMPLATE) ?: ""
         return sbn.packageName.contains("deezer", ignoreCase = true) ||
