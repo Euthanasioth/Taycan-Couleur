@@ -26,6 +26,18 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // DIAG : enregistre la trace exacte d'un plantage dans crash_log.txt
+        val ancienHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, e ->
+            try {
+                File(getExternalFilesDir(null), "crash_log.txt").writeText(
+                    "Thread : ${thread.name}\n${android.util.Log.getStackTraceString(e)}"
+                )
+            } catch (_: Exception) {
+            }
+            ancienHandler?.uncaughtException(thread, e)
+        }
+
         // Permission POST_NOTIFICATIONS (Android 13+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
