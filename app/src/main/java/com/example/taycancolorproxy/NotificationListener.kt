@@ -1,5 +1,6 @@
 package com.example.taycancolorproxy
 
+import android.app.Notification
 import android.content.ComponentName
 import android.media.session.MediaSessionManager
 import android.os.Handler
@@ -45,13 +46,14 @@ class NotificationListener : NotificationListenerService() {
             Logger.log("Erreur onListenerConnected : ${e.message}")
         }
 
-        // TEST : masquer aussi une notification Deezer déjà présente
+        // DIAG : que voit-on comme notifications au démarrage ?
         try {
-            activeNotifications
-                .filter { it.packageName == "deezer.android.app" }
-                .forEach { onNotificationPosted(it) }
+            val toutes = activeNotifications
+            val media = toutes.filter { estMedia(it) }
+            Logger.log("DIAG notifs actives : ${toutes.size} au total, ${media.size} de type média")
+            media.forEach { onNotificationPosted(it) }
         } catch (e: Exception) {
-            Logger.log("TEST snooze : lecture des notifs existantes impossible (${e.message})")
+            Logger.log("DIAG notifs : lecture impossible (${e.message})")
         }
     }
 
@@ -65,13 +67,29 @@ class NotificationListener : NotificationListenerService() {
         }
     }
 
-    // --- TEST : masquer la notification média de Deezer ---
+    // Une notification nous intéresse si c'est Deezer ou si elle est de type média
+    private fun estMedia(sbn: StatusBarNotification): Boolean {
+        val n = sbn.notification
+        val template = n.extras?.getString(Notification.EXTRA_TEMPLATE) ?: ""
+        return sbn.packageName.contains("deezer", ignoreCase = true) ||
+            n.category == Notification.CATEGORY_TRANSPORT ||
+            template.contains("MediaStyle")
+    }
+
+    // --- DIAG + TEST snooze ---
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        if (sbn.packageName != "deezer.android.app") return
+        if (!estMedia(sbn)) return
+
+        val n = sbn.notification
+        val template = n.extras?.getString(Notification.EXTRA_TEMPLATE) ?: ""
+        Logger.log(
+            "NOTIF vue : pkg=${sbn.packageName} cat=${n.category} " +
+                "tpl=${template.substringAfterLast('$')} ongoing=${sbn.isOngoing}"
+        )
+
+        if (!sbn.packageName.contains("deezer", ignoreCase = true)) return
 
         val key = sbn.key
-        Logger.log("TEST snooze : notif Deezer vue (ongoing=${sbn.isOngoing}, clé=$key)")
-
         try {
             snoozeNotification(key, 6 * 60 * 60 * 1000L)
             Logger.log("TEST snooze : appel envoyé sans erreur")
@@ -89,7 +107,12 @@ class NotificationListener : NotificationListenerService() {
             }
         }, 500L)
     }
-    // --- FIN DU TEST ---
+
+    override fun onNotificationRemoved(sbn: StatusBarNotification) {
+        if (!estMedia(sbn)) return
+        Logger.log("NOTIF retirée : pkg=${sbn.packageName}")
+    }
+    // --- FIN DIAG ---
 
     private fun findAndAttachDeezer() {
         try {
