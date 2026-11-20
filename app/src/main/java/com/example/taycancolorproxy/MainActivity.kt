@@ -26,6 +26,8 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        Logger.init(applicationContext)
+
         // DIAG : enregistre la trace exacte d'un plantage dans crash_log.txt
         val ancienHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, e ->
@@ -212,6 +214,27 @@ class MainActivity : AppCompatActivity() {
         exitText.textSize = 12f
         exitText.text = "DERNIÈRES MORTS DU PROCESSUS :\n\n" + exitInfo
         layout.addView(exitText)
+
+        // === JOURNAL de l'appli (journal.txt) ===
+        val journalText = TextView(this)
+        journalText.setPadding(0, 60, 0, 0)
+        journalText.textSize = 11f
+        journalText.setTextIsSelectable(true)
+        journalText.text = "JOURNAL (fin) :\n\n" + Logger.read()
+        layout.addView(journalText)
+
+        val refreshJournalBtn = Button(this)
+        refreshJournalBtn.text = "Actualiser le journal"
+        refreshJournalBtn.setOnClickListener { recreate() }
+        layout.addView(refreshJournalBtn)
+
+        val clearJournalBtn = Button(this)
+        clearJournalBtn.text = "Effacer le journal"
+        clearJournalBtn.setOnClickListener {
+            Logger.clear()
+            recreate()
+        }
+        layout.addView(clearJournalBtn)
 
         scroll.addView(layout)
         setContentView(scroll)
