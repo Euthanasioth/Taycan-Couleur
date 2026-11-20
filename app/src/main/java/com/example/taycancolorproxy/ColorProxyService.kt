@@ -121,8 +121,8 @@ class ColorProxyService : MediaBrowserService() {
         super.onCreate()
         instance = this
 
-        startAsForeground()
-
+        // CORRECTIF : la session est créée AVANT startAsForeground(),
+        // car la notification média utilise session.sessionToken.
         session = MediaSession(this, "TaycanColorProxy")
         session.setFlags(
             MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or
@@ -130,6 +130,8 @@ class ColorProxyService : MediaBrowserService() {
         )
         sessionToken = session.sessionToken
         session.isActive = true
+
+        startAsForeground()
 
         installSessionCallback()
 
@@ -205,23 +207,37 @@ class ColorProxyService : MediaBrowserService() {
         return currentController
     }
 
+    /**
+     * CORRECTIF : startForeground() doit TOUJOURS être appelé, sinon Android
+     * tue toute l'appli (ForegroundServiceDidNotStartInTimeException).
+     * Plan A : notification média. Plan B : notification simple. Plan C : arrêt propre.
+     */
     private fun startAsForeground() {
+        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_ID, "Taycan Couleur", NotificationManager.IMPORTANCE_LOW)
+        )
         try {
-            val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Taycan Couleur",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            nm.createNotificationChannel(channel)
-
             startForeground(
                 NOTIF_ID,
                 buildMediaNotification(),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
             )
+            Logger.log("startForeground OK (notification média)")
         } catch (e: Exception) {
-            Logger.log("Erreur startForeground : ${e.message}")
+            Logger.log("startForeground ÉCHEC (média) : ${e::class.java.simpleName} ${e.message}")
+            try {
+                val simple = Notification.Builder(this, CHANNEL_ID)
+                    .setContentTitle("Taycan Couleur")
+                    .setContentText("Proxy actif")
+                    .setSmallIcon(android.R.drawable.ic_media_play)
+                    .build()
+                startForeground(NOTIF_ID, simple)
+                Logger.log("startForeground OK (notification simple)")
+            } catch (e2: Exception) {
+                Logger.log("startForeground ÉCHEC (simple) : ${e2::class.java.simpleName} ${e2.message}")
+                stopSelf()
+            }
         }
     }
 
