@@ -33,6 +33,7 @@ class ColorProxyService : MediaBrowserService() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var tickCount = 0
     private var reclaimToken = 0
+    private val silentPlayer = SilentPlayer()
 
     /**
      * Rafraîchit périodiquement le PlaybackState pour réinitialiser
@@ -193,6 +194,14 @@ class ColorProxyService : MediaBrowserService() {
 
         startAsForeground()
 
+        // Son silencieux continu : notre appli produit réellement de l'audio
+        try {
+            silentPlayer.start()
+            Logger.log("SilentPlayer démarré")
+        } catch (e: Exception) {
+            Logger.log("SilentPlayer ÉCHEC : ${e.message}")
+        }
+
         installSessionCallback()
 
         session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, 0))
@@ -214,6 +223,7 @@ class ColorProxyService : MediaBrowserService() {
         Logger.log("SVC onDestroy")
         super.onDestroy()
         mainHandler.removeCallbacks(refreshSessionRunnable)
+        silentPlayer.stop()
         currentCallback?.let { currentController?.unregisterCallback(it) }
         session.release()
         instance = null
