@@ -26,6 +26,11 @@ class NotificationListener : NotificationListenerService() {
             }
         }
 
+    override fun onCreate() {
+        super.onCreate()
+        Logger.init(applicationContext)
+    }
+
     override fun onListenerConnected() {
         super.onListenerConnected()
         try {
