@@ -1,3 +1,4 @@
+
 name: Build APK
 
 on:
@@ -24,8 +25,16 @@ jobs:
           fi
           chmod +x gradlew
 
-      - name: Build APK
-        run: ./gradlew assembleDebug
+      - name: Vérifier le manifeste XML
+        run: |
+          echo "=== CONTENU DU MANIFESTE ==="
+          cat -n app/src/main/AndroidManifest.xml
+
+          echo "=== VALIDATION XML ==="
+          python3 -c "import xml.etree.ElementTree as ET; ET.parse('app/src/main/AndroidManifest.xml'); print('XML VALIDE')"
+
+          echo "=== BUILD ==="
+          ./gradlew :app:processDebugMainManifest --stacktrace --info
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
