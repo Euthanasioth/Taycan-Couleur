@@ -120,7 +120,7 @@ class ColorProxyService : MediaBrowserService() {
     override fun onCreate() {
         super.onCreate()
         instance = this
-
+        Logger.init(applicationContext)
         // CORRECTIF : la session est créée AVANT startAsForeground(),
         // car la notification média utilise session.sessionToken.
         session = MediaSession(this, "TaycanColorProxy")
