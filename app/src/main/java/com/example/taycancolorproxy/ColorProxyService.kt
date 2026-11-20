@@ -32,6 +32,7 @@ class ColorProxyService : MediaBrowserService() {
     private var currentCallback: MediaController.Callback? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var tickCount = 0
+    private var reclaimToken = 0
 
     /**
      * Rafraîchit périodiquement le PlaybackState pour réinitialiser
@@ -47,12 +48,10 @@ class ColorProxyService : MediaBrowserService() {
                 session.isActive = true
             } catch (_: Exception) {
             }
-            // Une ligne de journal par minute (toutes les 6 impulsions)
             tickCount++
             if (tickCount % 6 == 0) {
                 Logger.log("TICK ordre des sessions : ${sessionsSnapshot()}")
             }
-            // Re-programme dans 10 secondes
             mainHandler.postDelayed(this, 10_000L)
         }
     }
@@ -149,6 +148,31 @@ class ColorProxyService : MediaBrowserService() {
         }, 1000L)
     }
 
+    // ---------- Reprise de priorité ----------
+
+    /**
+     * Android remonte une session en tête quand son état passe de "inactif" à "actif".
+     * Quand Deezer passe en lecture, on met donc notre session en pause un court instant,
+     * puis on la repasse en lecture : cette transition arrive APRÈS celle de Deezer.
+     */
+    private fun reclaimPriority(state: Int, position: Long, why: String) {
+        val token = ++reclaimToken
+        try {
+            session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, position))
+        } catch (_: Exception) {
+        }
+        mainHandler.postDelayed({
+            if (token == reclaimToken) {
+                try {
+                    session.setPlaybackState(buildState(state, position))
+                    session.isActive = true
+                } catch (_: Exception) {
+                }
+                Logger.log("RECLAIM ($why) : ordre ${sessionsSnapshot()}")
+            }
+        }, 40L)
+    }
+
     // ---------- Cycle de vie ----------
 
     override fun onCreate() {
@@ -182,7 +206,6 @@ class ColorProxyService : MediaBrowserService() {
 
         Logger.log("SVC prêt, ordre des sessions : ${sessionsSnapshot()}")
 
-        // Démarre le rafraîchissement périodique (anti-timeout 30s)
         mainHandler.removeCallbacks(refreshSessionRunnable)
         mainHandler.postDelayed(refreshSessionRunnable, 10_000L)
     }
@@ -196,30 +219,11 @@ class ColorProxyService : MediaBrowserService() {
         instance = null
     }
 
-    /**
-     * Envoie 4 impulsions PLAYING à 0, 50, 150, 300 ms pour maximiser
-     * nos chances de rester la session la plus "récente" aux yeux d'Android Auto.
-     */
-    private fun forcePlayingBurst() {
-        val offsets = longArrayOf(0L, 50L, 150L, 300L)
-        for (delay in offsets) {
-            mainHandler.postDelayed({
-                try {
-                    session.setPlaybackState(buildState(PlaybackState.STATE_PLAYING, 0))
-                    session.isActive = true
-                } catch (_: Exception) {
-                }
-            }, delay)
-        }
-    }
-
     private fun installSessionCallback() {
         session.setCallback(object : MediaSession.Callback() {
             override fun onPlay() {
-                Logger.log("CMD reçue (Android Auto/téléphone) : PLAY | ordre : ${sessionsSnapshot()}")
-                forcePlayingBurst()
+                Logger.log("CMD reçue : PLAY | ordre : ${sessionsSnapshot()}")
                 ensureController()?.transportControls?.play()
-                forcePlayingBurst()
                 logOrderLater("CMD PLAY")
             }
 
@@ -231,17 +235,13 @@ class ColorProxyService : MediaBrowserService() {
 
             override fun onSkipToNext() {
                 Logger.log("CMD reçue : SUIVANT | ordre : ${sessionsSnapshot()}")
-                forcePlayingBurst()
                 ensureController()?.transportControls?.skipToNext()
-                forcePlayingBurst()
                 logOrderLater("CMD SUIVANT")
             }
 
             override fun onSkipToPrevious() {
                 Logger.log("CMD reçue : PRÉCÉDENT | ordre : ${sessionsSnapshot()}")
-                forcePlayingBurst()
                 ensureController()?.transportControls?.skipToPrevious()
-                forcePlayingBurst()
                 logOrderLater("CMD PRÉCÉDENT")
             }
 
@@ -377,22 +377,10 @@ class ColorProxyService : MediaBrowserService() {
         if (intent?.action == ACTION_MEDIA_BUTTON) {
             val action = intent.getLongExtra(EXTRA_MEDIA_ACTION, -1L)
             when (action) {
-                PlaybackState.ACTION_PLAY -> {
-                    forcePlayingBurst()
-                    ensureController()?.transportControls?.play()
-                    forcePlayingBurst()
-                }
+                PlaybackState.ACTION_PLAY -> ensureController()?.transportControls?.play()
                 PlaybackState.ACTION_PAUSE -> ensureController()?.transportControls?.pause()
-                PlaybackState.ACTION_SKIP_TO_NEXT -> {
-                    forcePlayingBurst()
-                    ensureController()?.transportControls?.skipToNext()
-                    forcePlayingBurst()
-                }
-                PlaybackState.ACTION_SKIP_TO_PREVIOUS -> {
-                    forcePlayingBurst()
-                    ensureController()?.transportControls?.skipToPrevious()
-                    forcePlayingBurst()
-                }
+                PlaybackState.ACTION_SKIP_TO_NEXT -> ensureController()?.transportControls?.skipToNext()
+                PlaybackState.ACTION_SKIP_TO_PREVIOUS -> ensureController()?.transportControls?.skipToPrevious()
             }
         }
         // START_STICKY : Android relance le service s'il le tue
@@ -454,24 +442,23 @@ class ColorProxyService : MediaBrowserService() {
                 val titre = metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)
                 Logger.log("DEEZER titre changé : $titre | ordre : ${sessionsSnapshot()}")
                 updateMetadata(metadata)
-                forcePlayingBurst()
                 logOrderLater("changement de titre")
             }
 
             override fun onPlaybackStateChanged(state: PlaybackState?) {
                 val deezerState = state?.state ?: PlaybackState.STATE_PAUSED
+                val position = state?.position ?: 0L
                 Logger.log(
-                    "DEEZER état=$deezerState pos=${state?.position} vitesse=${state?.playbackSpeed} " +
+                    "DEEZER état=$deezerState pos=$position vitesse=${state?.playbackSpeed} " +
                         "| ordre : ${sessionsSnapshot()}"
                 )
 
                 if (deezerState == PlaybackState.STATE_PLAYING ||
                     deezerState == PlaybackState.STATE_BUFFERING) {
-                    session.setPlaybackState(buildState(deezerState, state?.position ?: 0))
-                    session.isActive = true
-                    forcePlayingBurst()
+                    // Deezer vient de passer en lecture : on reprend la tête de pile
+                    reclaimPriority(deezerState, position, "état Deezer $deezerState")
                 } else {
-                    session.setPlaybackState(buildState(deezerState, state?.position ?: 0))
+                    session.setPlaybackState(buildState(deezerState, position))
                     session.isActive = true
                 }
                 updateNotification()
