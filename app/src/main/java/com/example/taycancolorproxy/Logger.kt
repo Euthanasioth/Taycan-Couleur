@@ -13,14 +13,15 @@ object Logger {
         if (file == null) file = File(ctx.getExternalFilesDir(null), "journal.txt")
     }
 
+    @Synchronized
     fun log(msg: String) {
         try {
             val f = file ?: return
             val t = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date())
             f.appendText("$t $msg\n")
-            if (f.length() > 60000) {
+            if (f.length() > 300000) {
                 val all = f.readText()
-                f.writeText(all.takeLast(30000))
+                f.writeText(all.takeLast(150000))
             }
         } catch (e: Exception) {
         }
@@ -29,7 +30,7 @@ object Logger {
     fun read(): String {
         return try {
             val f = file
-            if (f != null && f.exists()) f.readText().takeLast(6000) else "Journal vide"
+            if (f != null && f.exists()) f.readText().takeLast(15000) else "Journal vide"
         } catch (e: Exception) {
             "Erreur de lecture"
         }
