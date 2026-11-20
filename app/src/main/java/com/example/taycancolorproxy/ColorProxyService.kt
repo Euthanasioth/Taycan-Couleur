@@ -31,13 +31,15 @@ class ColorProxyService : MediaBrowserService() {
     private var currentController: MediaController? = null
     private var currentCallback: MediaController.Callback? = null
     private val mainHandler = Handler(Looper.getMainLooper())
-    private var tickCount = 0
-    private var reclaimToken = 0
-    private val silentPlayer = SilentPlayer()
+
+    // Cache du bitmap pour éviter de recréer 4 Mo à chaque métadonnée
+    private var cachedArtwork: Bitmap? = null
+    private var cachedC1: String? = null
+    private var cachedC2: String? = null
 
     /**
-     * Rafraîchit périodiquement le PlaybackState pour réinitialiser
-     * le timer interne ACTIVE_BUFFER d'Android (30 secondes).
+     * Refresh toutes les 20 secondes (au lieu de 10s)
+     * → réinitialise le timer ACTIVE_BUFFER (30s) avec 2x moins d'appels
      */
     private val refreshSessionRunnable = object : Runnable {
         override fun run() {
@@ -49,11 +51,7 @@ class ColorProxyService : MediaBrowserService() {
                 session.isActive = true
             } catch (_: Exception) {
             }
-            tickCount++
-            if (tickCount % 6 == 0) {
-                Logger.log("TICK ordre des sessions : ${sessionsSnapshot()}")
-            }
-            mainHandler.postDelayed(this, 10_000L)
+            mainHandler.postDelayed(this, 20_000L)
         }
     }
 
@@ -122,68 +120,12 @@ class ColorProxyService : MediaBrowserService() {
         )
     }
 
-    // ---------- Outils de journal ----------
-
-    private fun shortPkg(pkg: String): String = when {
-        pkg == packageName -> "PROXY"
-        pkg.contains("deezer", ignoreCase = true) -> "DEEZER"
-        else -> pkg.substringAfterLast('.')
-    }
-
-    /** Ordre actuel des sessions média, de la plus prioritaire à la moins prioritaire. */
-    private fun sessionsSnapshot(): String {
-        return try {
-            val manager = getSystemService(MEDIA_SESSION_SERVICE) as MediaSessionManager
-            val list = manager.getActiveSessions(ComponentName(this, NotificationListener::class.java))
-            if (list.isEmpty()) "(aucune)"
-            else list.joinToString(" > ") { "${shortPkg(it.packageName)}(${it.playbackState?.state})" }
-        } catch (e: Exception) {
-            "? (${e.message})"
-        }
-    }
-
-    /** Écrit l'ordre des sessions 1 s plus tard, pour voir qui est devant après un événement. */
-    private fun logOrderLater(tag: String) {
-        mainHandler.postDelayed({
-            Logger.log("ORDRE +1s après $tag : ${sessionsSnapshot()}")
-        }, 1000L)
-    }
-
-    // ---------- Reprise de priorité ----------
-
-    /**
-     * Android remonte une session en tête quand son état passe de "inactif" à "actif".
-     * Quand Deezer passe en lecture, on met donc notre session en pause un court instant,
-     * puis on la repasse en lecture : cette transition arrive APRÈS celle de Deezer.
-     */
-    private fun reclaimPriority(state: Int, position: Long, why: String) {
-        val token = ++reclaimToken
-        try {
-            session.setPlaybackState(buildState(PlaybackState.STATE_PAUSED, position))
-        } catch (_: Exception) {
-        }
-        mainHandler.postDelayed({
-            if (token == reclaimToken) {
-                try {
-                    session.setPlaybackState(buildState(state, position))
-                    session.isActive = true
-                } catch (_: Exception) {
-                }
-                Logger.log("RECLAIM ($why) : ordre ${sessionsSnapshot()}")
-            }
-        }, 40L)
-    }
-
-    // ---------- Cycle de vie ----------
-
     override fun onCreate() {
         super.onCreate()
         instance = this
-        Logger.init(applicationContext)
-        Logger.log("SVC onCreate")
 
-        // La session est créée AVANT startAsForeground(),
-        // car la notification média utilise session.sessionToken.
+        startAsForeground()
+
         session = MediaSession(this, "TaycanColorProxy")
         session.setFlags(
             MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or
@@ -191,16 +133,6 @@ class ColorProxyService : MediaBrowserService() {
         )
         sessionToken = session.sessionToken
         session.isActive = true
-
-        startAsForeground()
-
-        // Son silencieux continu : notre appli produit réellement de l'audio
-        try {
-            silentPlayer.start()
-            Logger.log("SilentPlayer démarré")
-        } catch (e: Exception) {
-            Logger.log("SilentPlayer ÉCHEC : ${e.message}")
-        }
 
         installSessionCallback()
 
@@ -213,55 +145,28 @@ class ColorProxyService : MediaBrowserService() {
         findDeezerNow()
         updateNotification()
 
-        Logger.log("SVC prêt, ordre des sessions : ${sessionsSnapshot()}")
-
         mainHandler.removeCallbacks(refreshSessionRunnable)
-        mainHandler.postDelayed(refreshSessionRunnable, 10_000L)
-    }
-
-    override fun onDestroy() {
-        Logger.log("SVC onDestroy")
-        super.onDestroy()
-        mainHandler.removeCallbacks(refreshSessionRunnable)
-        silentPlayer.stop()
-        currentCallback?.let { currentController?.unregisterCallback(it) }
-        session.release()
-        instance = null
+        mainHandler.postDelayed(refreshSessionRunnable, 20_000L)
     }
 
     private fun installSessionCallback() {
         session.setCallback(object : MediaSession.Callback() {
             override fun onPlay() {
-                Logger.log("CMD reçue : PLAY | ordre : ${sessionsSnapshot()}")
                 ensureController()?.transportControls?.play()
-                logOrderLater("CMD PLAY")
             }
-
             override fun onPause() {
-                Logger.log("CMD reçue : PAUSE | ordre : ${sessionsSnapshot()}")
                 ensureController()?.transportControls?.pause()
-                logOrderLater("CMD PAUSE")
             }
-
             override fun onSkipToNext() {
-                Logger.log("CMD reçue : SUIVANT | ordre : ${sessionsSnapshot()}")
                 ensureController()?.transportControls?.skipToNext()
-                logOrderLater("CMD SUIVANT")
             }
-
             override fun onSkipToPrevious() {
-                Logger.log("CMD reçue : PRÉCÉDENT | ordre : ${sessionsSnapshot()}")
                 ensureController()?.transportControls?.skipToPrevious()
-                logOrderLater("CMD PRÉCÉDENT")
             }
-
             override fun onStop() {
-                Logger.log("CMD reçue : STOP")
                 ensureController()?.transportControls?.stop()
             }
-
             override fun onPlayFromMediaId(mediaId: String, extras: Bundle?) {
-                Logger.log("CMD reçue : choix couleur $mediaId")
                 selectColor(mediaId)
             }
         })
@@ -270,41 +175,27 @@ class ColorProxyService : MediaBrowserService() {
     private fun ensureController(): MediaController? {
         val c = currentController
         if (c != null) return c
-        Logger.log("ensureController : pas de contrôleur Deezer, recherche")
         findDeezerNow()
         return currentController
     }
 
-    /**
-     * startForeground() doit TOUJOURS être appelé, sinon Android tue toute l'appli.
-     * Plan A : notification média. Plan B : notification simple. Plan C : arrêt propre.
-     */
     private fun startAsForeground() {
-        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "Taycan Couleur", NotificationManager.IMPORTANCE_LOW)
-        )
         try {
+            val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Taycan Couleur",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            nm.createNotificationChannel(channel)
+
             startForeground(
                 NOTIF_ID,
                 buildMediaNotification(),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
             )
-            Logger.log("startForeground OK (notification média)")
         } catch (e: Exception) {
-            Logger.log("startForeground ÉCHEC (média) : ${e::class.java.simpleName} ${e.message}")
-            try {
-                val simple = Notification.Builder(this, CHANNEL_ID)
-                    .setContentTitle("Taycan Couleur")
-                    .setContentText("Proxy actif")
-                    .setSmallIcon(android.R.drawable.ic_media_play)
-                    .build()
-                startForeground(NOTIF_ID, simple)
-                Logger.log("startForeground OK (notification simple)")
-            } catch (e2: Exception) {
-                Logger.log("startForeground ÉCHEC (simple) : ${e2::class.java.simpleName} ${e2.message}")
-                stopSelf()
-            }
+            Logger.log("Erreur startForeground : ${e.message}")
         }
     }
 
@@ -383,7 +274,6 @@ class ColorProxyService : MediaBrowserService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Logger.log("onStartCommand appelé (action=${intent?.action})")
         if (intent?.action == ACTION_MEDIA_BUTTON) {
             val action = intent.getLongExtra(EXTRA_MEDIA_ACTION, -1L)
             when (action) {
@@ -393,14 +283,12 @@ class ColorProxyService : MediaBrowserService() {
                 PlaybackState.ACTION_SKIP_TO_PREVIOUS -> ensureController()?.transportControls?.skipToPrevious()
             }
         }
-        // START_STICKY : Android relance le service s'il le tue
         return START_STICKY
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         Logger.log("onTaskRemoved : l'utilisateur a fermé la tâche de l'app")
         super.onTaskRemoved(rootIntent)
-        // On laisse le service tourner : ne rien faire ici
     }
 
     private fun findDeezerNow() {
@@ -442,41 +330,22 @@ class ColorProxyService : MediaBrowserService() {
             return
         }
 
-        Logger.log("attach : nouveau contrôleur ${shortPkg(sourceController.packageName)}")
-
         currentCallback?.let { currentController?.unregisterCallback(it) }
         currentController = sourceController
 
         val callback = object : MediaController.Callback() {
             override fun onMetadataChanged(metadata: MediaMetadata?) {
-                val titre = metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)
-                Logger.log("DEEZER titre changé : $titre | ordre : ${sessionsSnapshot()}")
                 updateMetadata(metadata)
-                logOrderLater("changement de titre")
             }
-
             override fun onPlaybackStateChanged(state: PlaybackState?) {
-                val deezerState = state?.state ?: PlaybackState.STATE_PAUSED
-                val position = state?.position ?: 0L
-                Logger.log(
-                    "DEEZER état=$deezerState pos=$position vitesse=${state?.playbackSpeed} " +
-                        "| ordre : ${sessionsSnapshot()}"
+                session.setPlaybackState(
+                    buildState(
+                        state?.state ?: PlaybackState.STATE_PAUSED,
+                        state?.position ?: 0
+                    )
                 )
-
-                if (deezerState == PlaybackState.STATE_PLAYING ||
-                    deezerState == PlaybackState.STATE_BUFFERING) {
-                    // Deezer vient de passer en lecture : on reprend la tête de pile
-                    reclaimPriority(deezerState, position, "état Deezer $deezerState")
-                } else {
-                    session.setPlaybackState(buildState(deezerState, position))
-                    session.isActive = true
-                }
+                session.isActive = true
                 updateNotification()
-                logOrderLater("état Deezer $deezerState")
-            }
-
-            override fun onSessionDestroyed() {
-                Logger.log("DEEZER session détruite | ordre : ${sessionsSnapshot()}")
             }
         }
         sourceController.registerCallback(callback)
@@ -511,7 +380,7 @@ class ColorProxyService : MediaBrowserService() {
         if (source == null) return
         lastSourceMetadata = source
 
-        val artwork = makeColorArtwork(1000, 1000)
+        val artwork = getOrCreateArtwork()
 
         val builder = MediaMetadata.Builder()
         builder.putString(MediaMetadata.METADATA_KEY_TITLE, source.getString(MediaMetadata.METADATA_KEY_TITLE))
@@ -524,11 +393,28 @@ class ColorProxyService : MediaBrowserService() {
         session.setMetadata(builder.build())
     }
 
-    private fun makeColorArtwork(width: Int, height: Int): Bitmap {
+    /**
+     * Crée le bitmap de couleur seulement si la couleur a changé (cache).
+     * Taille 512x512 (suffisant pour Android Auto, 4x moins de mémoire que 1000x1000).
+     */
+    private fun getOrCreateArtwork(): Bitmap {
         val prefs = getSharedPreferences("taycan_couleur", MODE_PRIVATE)
         val c1 = prefs.getString("color1", "#FF3DBB")!!
         val c2 = prefs.getString("color2", "#8A2BE2")!!
-        return makeGradientBitmap(width, height, c1, c2)
+
+        val cached = cachedArtwork
+        if (cached != null && !cached.isRecycled && c1 == cachedC1 && c2 == cachedC2) {
+            return cached
+        }
+
+        // Libère l'ancien bitmap pour éviter les fuites mémoire
+        cachedArtwork?.recycle()
+
+        val newBitmap = makeGradientBitmap(512, 512, c1, c2)
+        cachedArtwork = newBitmap
+        cachedC1 = c1
+        cachedC2 = c2
+        return newBitmap
     }
 
     private fun makeGradientBitmap(width: Int, height: Int, c1: String, c2: String): Bitmap {
@@ -552,7 +438,6 @@ class ColorProxyService : MediaBrowserService() {
         clientUid: Int,
         rootHints: Bundle?
     ): BrowserRoot {
-        Logger.log("AA onGetRoot : client=$clientPackageName uid=$clientUid")
         val extras = Bundle()
         extras.putBoolean("android.media.browse.CONTENT_STYLE_SUPPORTED", true)
         extras.putInt("android.media.browse.CONTENT_STYLE_BROWSABLE_HINT", 2)
@@ -564,7 +449,6 @@ class ColorProxyService : MediaBrowserService() {
         parentId: String,
         result: Result<MutableList<MediaBrowser.MediaItem>>
     ) {
-        Logger.log("AA onLoadChildren : parent=$parentId")
         val items = mutableListOf<MediaBrowser.MediaItem>()
 
         if (parentId == "root") {
@@ -612,6 +496,16 @@ class ColorProxyService : MediaBrowserService() {
         }
 
         result.sendResult(items)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        mainHandler.removeCallbacks(refreshSessionRunnable)
+        currentCallback?.let { currentController?.unregisterCallback(it) }
+        cachedArtwork?.recycle()
+        cachedArtwork = null
+        session.release()
+        instance = null
     }
 }
 
